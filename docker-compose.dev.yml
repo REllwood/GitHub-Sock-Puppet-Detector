@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sockpuppet-postgres-dev
+    environment:
+      POSTGRES_USER: sockpuppet
+      POSTGRES_PASSWORD: sockpuppet_dev_password
+      POSTGRES_DB: sockpuppet
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    networks:
+      - sockpuppet-dev-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: sockpuppet-redis-dev
+    command: redis-server --appendonly yes
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_dev_data:/data
+    networks:
+      - sockpuppet-dev-network
+
+volumes:
+  postgres_dev_data:
+    driver: local
+  redis_dev_data:
+    driver: local
+
+networks:
+  sockpuppet-dev-network:
+    driver: bridge

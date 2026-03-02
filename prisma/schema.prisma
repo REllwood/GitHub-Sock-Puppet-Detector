@@ -1,0 +1,123 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Repository {
+  id             String     @id @default(cuid())
+  githubId       Int        @unique
+  fullName       String     @unique // "owner/repo"
+  installationId Int
+  analyses       Analysis[]
+  alerts         Alert[]
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@index([installationId])
+}
+
+model Account {
+  id              String            @id @default(cuid())
+  githubId        Int               @unique
+  username        String            @unique
+  email           String?
+  createdAt       DateTime
+  profileData     Json              // Full GitHub profile
+  riskScore       Float             @default(0)
+  flagReasons     String[]          // Array of detection reasons
+  comments        Comment[]
+  analyses        AccountAnalysis[]
+  lastAnalysedAt  DateTime?
+  updatedAt       DateTime          @updatedAt
+
+  @@index([riskScore])
+  @@index([username])
+}
+
+model Comment {
+  id           String     @id @default(cuid())
+  githubId     Int        @unique
+  accountId    String
+  account      Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  repositoryId String?
+  content      String     @db.Text
+  createdAt    DateTime
+  issueNumber  Int?
+  prNumber     Int?
+  updatedAt    DateTime   @updatedAt
+
+  @@index([accountId])
+  @@index([repositoryId])
+  @@index([createdAt])
+}
+
+model Analysis {
+  id               String            @id @default(cuid())
+  repositoryId     String
+  repository       Repository        @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  triggeredBy      String            // "webhook" | "manual"
+  status           String            // "pending" | "processing" | "completed" | "failed"
+  accountResults   AccountAnalysis[]
+  detectedClusters Json[]            // Coordinated groups
+  errorMessage     String?           @db.Text
+  completedAt      DateTime?
+  createdAt        DateTime          @default(now())
+
+  @@index([repositoryId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model AccountAnalysis {
+  id         String   @id @default(cuid())
+  analysisId String
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  accountId  String
+  account    Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  riskScore  Float
+  detections Json     // Detailed detection breakdown
+  createdAt  DateTime @default(now())
+
+  @@unique([analysisId, accountId])
+  @@index([accountId])
+  @@index([riskScore])
+}
+
+model Alert {
+  id               String     @id @default(cuid())
+  repositoryId     String
+  repository       Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  severity         String     // "low" | "medium" | "high" | "critical"
+  title            String
+  description      String     @db.Text
+  accountsInvolved String[]   // Account IDs
+  dismissed        Boolean    @default(false)
+  dismissedAt      DateTime?
+  dismissedBy      String?
+  createdAt        DateTime   @default(now())
+
+  @@index([repositoryId])
+  @@index([severity])
+  @@index([dismissed])
+  @@index([createdAt])
+}
+
+model Installation {
+  id                String   @id @default(cuid())
+  githubInstallationId Int   @unique
+  accountType       String   // "User" | "Organization"
+  accountLogin      String
+  targetType        String   // "User" | "Organization"
+  permissions       Json
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([githubInstallationId])
+}
