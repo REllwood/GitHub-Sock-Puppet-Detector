@@ -2,14 +2,16 @@ import { DetectionResult, AccountRiskAnalysis, RiskLevel } from '@/types/analysi
 
 /**
  * Detection weights for risk calculation
+ * Note: LLM weight is optional and will be 0 if LLM analysis is disabled
  */
 const DETECTION_WEIGHTS = {
   accountAge: 0.15,
-  namePattern: 0.2,
-  emailPattern: 0.15,
-  singleRepo: 0.1,
-  coordinatedBehaviour: 0.3,
-  temporalClustering: 0.1,
+  namePattern: 0.18,
+  emailPattern: 0.12,
+  singleRepo: 0.08,
+  coordinatedBehaviour: 0.25,
+  temporalClustering: 0.08,
+  llmAnalysis: 0.14, // Optional - only used if enabled
 } as const;
 
 /**
@@ -32,14 +34,24 @@ export function calculateRiskScore(detections: {
   singleRepo: DetectionResult;
   coordinatedBehaviour: DetectionResult;
   temporalClustering: DetectionResult;
+  llmAnalysis?: DetectionResult;
 }): number {
-  const weightedSum =
+  // Base score calculation
+  let weightedSum =
     detections.accountAge.score * DETECTION_WEIGHTS.accountAge +
     detections.namePattern.score * DETECTION_WEIGHTS.namePattern +
     detections.emailPattern.score * DETECTION_WEIGHTS.emailPattern +
     detections.singleRepo.score * DETECTION_WEIGHTS.singleRepo +
     detections.coordinatedBehaviour.score * DETECTION_WEIGHTS.coordinatedBehaviour +
     detections.temporalClustering.score * DETECTION_WEIGHTS.temporalClustering;
+
+  // Add LLM score if available
+  if (detections.llmAnalysis && detections.llmAnalysis.score > 0) {
+    weightedSum += detections.llmAnalysis.score * DETECTION_WEIGHTS.llmAnalysis;
+    
+    // Normalize to account for the extra weight
+    weightedSum = (weightedSum / 1.14) * 1.0; // Adjust for the new total weight
+  }
 
   // Ensure score is between 0 and 100
   return Math.max(0, Math.min(100, weightedSum));

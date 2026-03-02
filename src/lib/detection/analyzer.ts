@@ -8,6 +8,7 @@ import {
 } from './single-repo';
 import { detectCoordinatedBehaviour } from './coordinated-behaviour';
 import { detectTemporalClustering } from './temporal-analysis';
+import { runLLMAnalysis } from './llm-analysis';
 import { createAccountRiskAnalysis } from './risk-scorer';
 import type { AccountRiskAnalysis } from '@/types/analysis';
 
@@ -111,6 +112,9 @@ export async function analyzeRepository(repositoryId: string): Promise<{
 
   // Run temporal clustering detection
   const temporalResult = detectTemporalClustering(commentData);
+
+  // Run LLM analysis if enabled (async, but we'll await it)
+  const llmResult = await runLLMAnalysis(commentData);
 
   // Analyze each account
   const accountAnalyses: AccountRiskAnalysis[] = [];
