@@ -211,19 +211,3 @@ Format code:
 ```bash
 npm run format
 ```
-
-## Contributing
-
-Contributions are welcome! Please open an issue or submit a pull request.
-
-## Licence
-
-MIT Licence
-
-## Security
-
-This tool is designed to detect security threats. If you discover a security vulnerability, please email [security@yourdomain.com](mailto:security@yourdomain.com).
-
-## Support
-
-For questions and support, please open an issue on GitHub.
