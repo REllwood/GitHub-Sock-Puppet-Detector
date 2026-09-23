@@ -1,4 +1,4 @@
-import { calculateRiskScore, getRiskLevel } from '@/lib/detection/risk-scorer';
+import { calculateRiskScore, generateFlagReasons, getRiskLevel } from '@/lib/detection/risk-scorer';
 import { DetectionResult } from '@/types/analysis';
 
 describe('Risk Scoring', () => {
@@ -84,6 +84,19 @@ describe('Risk Scoring', () => {
     expect(getRiskLevel(61)).toBe('high');
     expect(getRiskLevel(85)).toBe('high');
     expect(getRiskLevel(86)).toBe('critical');
+  });
+
+  it('should list flag reasons by their contribution to the score', () => {
+    const reasons = generateFlagReasons({
+      accountAge: { detected: true, score: 40, reason: 'new' },
+      namePattern: { detected: true, score: 70, reason: 'generic' },
+      emailPattern: { detected: false, score: 0 },
+      singleRepo: { detected: false, score: 0 },
+      coordinatedBehaviour: { detected: true, score: 85, reason: 'copied' },
+      temporalClustering: { detected: false, score: 0 },
+    });
+
+    expect(reasons).toEqual(['Coordination: copied', 'Age: new', 'Name: generic']);
   });
 
   it('should handle edge cases', () => {

@@ -1,7 +1,10 @@
 import Link from 'next/link';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
+import { getAppInstallUrl } from '@/lib/app-config';
 import { requireViewer } from '@/lib/viewer';
+import SubmitButton from '@/components/SubmitButton';
+import { analyseRepositoryAction } from '../actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,18 +16,27 @@ async function getRepositories(repositoryFilter: Prisma.RepositoryWhereInput) {
         orderBy: { createdAt: 'desc' },
         take: 1,
       },
-      alerts: {
-        where: { dismissed: false },
-      },
       _count: {
         select: {
           analyses: true,
-          alerts: true,
+          comments: true,
+          alerts: { where: { dismissed: false } },
         },
       },
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { fullName: 'asc' },
   });
+}
+
+function InstallButton({ className }: { className: string }) {
+  const installUrl = getAppInstallUrl();
+  if (!installUrl) return null;
+
+  return (
+    <a href={installUrl} target="_blank" rel="noopener noreferrer" className={className}>
+      Install GitHub App
+    </a>
+  );
 }
 
 export default async function RepositoriesPage() {
@@ -35,56 +47,47 @@ export default async function RepositoriesPage() {
     <div>
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold">Repositories</h1>
-        <a
-          href="https://github.com/apps/sock-puppet-detector"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          Install GitHub App
-        </a>
+        <InstallButton className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors" />
       </div>
 
       {repositories.length === 0 ? (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-12 text-center">
           <h2 className="text-xl font-semibold mb-4">No repositories yet</h2>
           <p className="text-gray-600 dark:text-gray-400 mb-6">
-            Install the GitHub App on your repositories to start detecting sock puppet accounts
+            Install the GitHub App on your repositories to start detecting sock puppet accounts.
+            Repositories appear here once the app is installed on them and you have access to them
+            on GitHub.
           </p>
-          <a
-            href="https://github.com/apps/sock-puppet-detector"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            Install GitHub App
-          </a>
+          <InstallButton className="inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors" />
         </div>
       ) : (
         <div className="grid gap-6">
           {repositories.map(repo => {
             const lastAnalysis = repo.analyses[0];
-            const activeAlerts = repo.alerts.length;
+            const activeAlerts = repo._count.alerts;
+            const running =
+              lastAnalysis?.status === 'pending' || lastAnalysis?.status === 'processing';
 
             return (
               <div
                 key={repo.id}
                 className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 hover:shadow-lg transition-shadow"
               >
-                <div className="flex items-start justify-between">
+                <div className="flex flex-wrap items-start justify-between gap-4">
                   <div className="flex-1">
                     <h3 className="text-lg font-semibold mb-2">
-                      <Link
+                      <a
                         href={`https://github.com/${repo.fullName}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="hover:text-blue-600 dark:hover:text-blue-400"
                       >
                         {repo.fullName}
-                      </Link>
+                      </a>
                     </h3>
 
-                    <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-400">
+                    <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600 dark:text-gray-400">
+                      <span>{repo._count.comments} comments</span>
                       <span>{repo._count.analyses} analyses</span>
                       {activeAlerts > 0 && (
                         <span className="text-red-600 dark:text-red-400 font-medium">
@@ -93,7 +96,8 @@ export default async function RepositoriesPage() {
                       )}
                       {lastAnalysis && (
                         <span>
-                          Last analysed: {new Date(lastAnalysis.createdAt).toLocaleDateString()}
+                          Last analysis: {new Date(lastAnalysis.createdAt).toLocaleString()} (
+                          {lastAnalysis.status})
                         </span>
                       )}
                     </div>
@@ -106,14 +110,23 @@ export default async function RepositoriesPage() {
                     >
                       View Analyses
                     </Link>
-                    <form action={`/api/analyse/${repo.fullName}`} method="POST">
-                      <button
-                        type="submit"
-                        className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    {running ? (
+                      <Link
+                        href={`/dashboard/analysis/${lastAnalysis.id}`}
+                        className="px-4 py-2 text-sm bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-lg"
                       >
-                        Analyse Now
-                      </button>
-                    </form>
+                        Analysis running…
+                      </Link>
+                    ) : (
+                      <form action={analyseRepositoryAction.bind(null, repo.id)}>
+                        <SubmitButton
+                          pendingText="Starting…"
+                          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                        >
+                          Analyse Now
+                        </SubmitButton>
+                      </form>
+                    )}
                   </div>
                 </div>
 
