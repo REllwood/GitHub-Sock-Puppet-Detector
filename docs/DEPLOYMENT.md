@@ -2,11 +2,18 @@
 
 ## Production Deployment
 
+The system runs as two processes that share PostgreSQL and Redis:
+
+- **Web app** (Next.js): dashboard, REST API and the GitHub webhook endpoint
+- **Worker** (BullMQ): profile syncing, comment backfill and analyses
+
+Database migrations are applied separately before either starts.
+
 ### Prerequisites
 
 - Docker and Docker Compose installed
 - Domain name with SSL certificate
-- GitHub App configured for production
+- GitHub App configured for production (see [SETUP.md](SETUP.md#5-github-app-configuration))
 
 ## Deployment Options
 
@@ -14,53 +21,44 @@
 
 #### 1. Prepare Environment
 
-Create `.env` file with production values:
+Create a `.env` file with production values:
 
 ```bash
 # GitHub App
 GITHUB_APP_ID=your_production_app_id
 GITHUB_APP_PRIVATE_KEY="your_production_private_key"
 GITHUB_WEBHOOK_SECRET=your_production_webhook_secret
-GITHUB_CLIENT_ID=your_production_client_id
-GITHUB_CLIENT_SECRET=your_production_client_secret
-
-# Database
-DATABASE_URL=postgresql://sockpuppet:secure_password@postgres:5432/sockpuppet
-
-# Redis
-REDIS_URL=redis://redis:6379
+GITHUB_CLIENT_ID=your_production_app_client_id
+GITHUB_CLIENT_SECRET=your_production_app_client_secret
+GITHUB_APP_SLUG=your-app-name
 
 # App
 NEXTAUTH_SECRET=your_secure_random_secret
 NEXTAUTH_URL=https://your-domain.com
-NODE_ENV=production
+ADMIN_GITHUB_LOGINS=your-github-login
 
 # Optional
-LOG_LEVEL=info
 RATE_LIMIT_WINDOW_MS=900000
 RATE_LIMIT_MAX_REQUESTS=100
 ```
 
+Compose sets `DATABASE_URL` and `REDIS_URL` for the bundled PostgreSQL and Redis. Set a database password with `POSTGRES_PASSWORD` in your shell or a `.env` file next to `docker-compose.yml`.
+
 #### 2. Build and Deploy
 
 ```bash
-# Build the image
-docker-compose build
-
-# Start services
-docker-compose up -d
-
-# Check logs
-docker-compose logs -f app
+docker compose up -d --build
 ```
 
-#### 3. Run Database Migrations
+This starts PostgreSQL and Redis (not exposed outside the Docker network), runs the `migrate` container to apply migrations, then starts the `app` (port 3000) and `worker` services.
 
 ```bash
-docker-compose exec app npx prisma migrate deploy
+# Check status and logs
+docker compose ps
+docker compose logs -f app worker
 ```
 
-#### 4. Configure Reverse Proxy
+#### 3. Configure Reverse Proxy
 
 Use Nginx or Traefik to handle SSL:
 
@@ -87,71 +85,55 @@ server {
 }
 ```
 
-### Option 2: Platform-Specific Deployments
+### Option 2: Platform Deployments (Railway, Render, AWS ECS, ...)
 
-#### Railway
+Build from the `Dockerfile`, which has three targets:
 
-1. Create new project on Railway
-2. Connect GitHub repository
-3. Add PostgreSQL and Redis services
-4. Configure environment variables
-5. Deploy
+| Target | Command | Purpose |
+|---|---|---|
+| `runner` | `node server.js` | Web app (listens on `PORT`, default 3000) |
+| `worker` | `node --enable-source-maps dist/worker.mjs` | Background worker |
+| `migrate` | `npx prisma migrate deploy` | Apply migrations (run before each release) |
 
-#### Render
+Then:
 
-1. Create new Web Service
-2. Connect GitHub repository
-3. Add PostgreSQL and Redis instances
-4. Set environment variables
-5. Deploy
+1. Provision PostgreSQL 16+ and Redis 7+ (managed services are fine; use a `rediss://` URL for TLS)
+2. Create a web service from the `runner` target and a background worker from the `worker` target, both with the same environment variables including `DATABASE_URL` and `REDIS_URL`
+3. Run the `migrate` target as a release or pre-deploy step
+4. Point the GitHub App's webhook URL at `https://your-domain.com/api/webhooks/github`
 
-#### AWS ECS
-
-1. Build Docker image
-2. Push to ECR
-3. Create ECS task definition
-4. Configure RDS PostgreSQL and ElastiCache Redis
-5. Create ECS service
-6. Configure Application Load Balancer
+Without Docker, the equivalent commands are `npm ci && npm run build`, then `npm run db:deploy`, `npm start` and `npm run worker`.
 
 ## Production Checklist
 
 ### Security
 
-- [ ] Use strong secrets for all credentials
-- [ ] Enable SSL/TLS (HTTPS)
-- [ ] Configure firewall rules
-- [ ] Enable rate limiting
-- [ ] Use environment variables (not hardcoded)
-- [ ] Restrict database access to application only
-- [ ] Enable GitHub webhook signature verification
-- [ ] Configure CORS appropriately
+- [ ] Use strong secrets for all credentials (`NEXTAUTH_SECRET`, webhook secret, database password)
+- [ ] Serve the app over HTTPS and set `NEXTAUTH_URL` to the HTTPS URL
+- [ ] Keep PostgreSQL and Redis off the public internet
+- [ ] Set `ADMIN_GITHUB_LOGINS` only to people who should see every repository
+- [ ] Review the API rate limit settings
 
 ### Database
 
 - [ ] Enable automated backups
-- [ ] Configure connection pooling
-- [ ] Set up read replicas (if needed)
+- [ ] Configure connection pooling if you run several app instances
 - [ ] Monitor database performance
-- [ ] Enable query logging for troubleshooting
 
 ### Application
 
 - [ ] Set `NODE_ENV=production`
-- [ ] Configure logging (structured logs)
-- [ ] Set up error tracking (e.g., Sentry)
-- [ ] Configure monitoring (e.g., Prometheus, Grafana)
-- [ ] Set up health checks
+- [ ] Monitor `/api/health` (checks database and Redis)
+- [ ] Collect logs from both the app and the worker
 - [ ] Configure auto-restart on failure
 - [ ] Set resource limits (CPU, memory)
 
 ### GitHub App
 
-- [ ] Update webhook URL to production domain
-- [ ] Verify webhook secret is secure
-- [ ] Test webhook delivery
-- [ ] Configure OAuth callback URLs
-- [ ] Update homepage URL
+- [ ] Webhook URL points to the production domain
+- [ ] Callback URL is `https://your-domain.com/api/auth/callback/github`
+- [ ] Webhook secret matches `GITHUB_WEBHOOK_SECRET`
+- [ ] Test a webhook delivery from the app's settings page
 
 ## Monitoring
 
@@ -167,39 +149,32 @@ Expected response:
 ```json
 {
   "status": "healthy",
-  "timestamp": "2024-01-01T00:00:00Z",
+  "timestamp": "2026-01-01T00:00:00.000Z",
   "services": {
-    "database": "connected"
+    "database": "connected",
+    "redis": "connected"
   }
 }
 ```
 
+It returns HTTP 503 with `"status": "unhealthy"` if either service is unreachable.
+
 ### Logging
 
-Application logs are written to stdout. Configure your deployment platform to aggregate logs:
+Both processes log to stdout. Configure your deployment platform to aggregate logs:
 
-- **Docker**: `docker-compose logs -f`
+- **Docker**: `docker compose logs -f app worker`
 - **Kubernetes**: `kubectl logs -f pod-name`
 - **Cloud platforms**: Use built-in log aggregation
 
-### Metrics
+The worker logs each completed analysis (accounts analysed, comments and profiles synced, alerts raised) and every failed job with its error.
 
-Monitor key metrics:
-- API response times
-- Database query performance
-- Queue processing rate
-- Memory and CPU usage
-- Error rates
+### What to Watch
 
-### Alerts
-
-Set up alerts for:
-- Application downtime
-- High error rates
-- Database connection failures
-- Redis connection failures
-- High memory usage
-- Slow response times
+- Analyses stuck in "pending" (the worker isn't running or can't reach Redis)
+- Failed analyses on the Analyses page (the error is shown on the analysis)
+- GitHub API rate limit errors in worker logs (each installation gets 5,000 requests per hour)
+- Webhook delivery failures in the GitHub App settings
 
 ## Backup and Recovery
 
@@ -208,67 +183,57 @@ Set up alerts for:
 **Automated backups** (PostgreSQL):
 ```bash
 # Daily backup script
-pg_dump -h localhost -U sockpuppet sockpuppet | gzip > backup-$(date +%Y%m%d).sql.gz
+docker compose exec -T postgres pg_dump -U sockpuppet sockpuppet | gzip > backup-$(date +%Y%m%d).sql.gz
 ```
 
 **Restore from backup**:
 ```bash
-gunzip < backup-20240101.sql.gz | psql -h localhost -U sockpuppet sockpuppet
+gunzip < backup-20260101.sql.gz | docker compose exec -T postgres psql -U sockpuppet sockpuppet
 ```
 
 ### Application State
 
-- Database: Regular PostgreSQL backups
-- Redis: Enable AOF persistence
+- Database: Regular PostgreSQL backups (all analysis results and alerts live here)
+- Redis: Only holds queued jobs and rate limit counters; AOF persistence is enabled
 - Environment: Store `.env` securely
 
 ## Scaling
 
-### Horizontal Scaling
+### Web App
 
-1. Run multiple application instances
-2. Use load balancer (Nginx, AWS ALB)
-3. Share Redis instance across instances
-4. Use single PostgreSQL primary with read replicas
+Run multiple app instances behind a load balancer. They share PostgreSQL and Redis; rate limits are shared through Redis.
 
-### Vertical Scaling
-
-- Increase CPU and memory allocations
-- Optimise database queries
-- Add database indexes
-- Tune PostgreSQL configuration
-
-### Queue Workers
+### Workers
 
 Scale worker processes independently:
 
 ```bash
-# Run multiple workers
-docker-compose up -d --scale worker=3
+docker compose up -d --scale worker=3
 ```
+
+Each worker processes up to 5 comment jobs and 2 repository analyses at a time.
 
 ## Troubleshooting
 
-### High Memory Usage
+### Analyses Stay Pending
 
-- Check for memory leaks
-- Increase container memory limit
-- Optimise database queries
-- Review queue job retention
+- Check the worker is running: `docker compose ps worker`
+- Check worker logs for connection or authentication errors
+- Analyses stuck for more than 30 minutes are marked as timed out automatically
 
-### Slow Performance
+### Webhooks Return 401
 
-- Enable query logging
-- Add database indexes
-- Optimise N+1 queries
-- Increase worker concurrency
+- `GITHUB_WEBHOOK_SECRET` doesn't match the secret configured on the GitHub App
 
 ### Webhook Delays
 
-- Check queue processing rate
-- Increase worker count
-- Verify Redis performance
-- Check network latency
+- Webhook-triggered analyses are batched per repository over `ANALYSIS_DEBOUNCE_MS` (default one minute)
+- Check the worker is keeping up; scale workers if needed
+
+### Users See No Repositories
+
+- The app must be installed on the repository, and the user must have access to it on GitHub
+- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` must be the GitHub App's credentials
 
 ## Maintenance
 
@@ -278,27 +243,16 @@ docker-compose up -d --scale worker=3
 # Pull latest changes
 git pull origin main
 
-# Rebuild and deploy
-docker-compose build
-docker-compose up -d
-
-# Run migrations if needed
-docker-compose exec app npx prisma migrate deploy
+# Rebuild and deploy (migrations run automatically before the app and worker start)
+docker compose up -d --build
 ```
 
 ### Database Maintenance
 
 ```bash
 # Vacuum and analyse
-docker-compose exec postgres psql -U sockpuppet -c "VACUUM ANALYZE;"
+docker compose exec postgres psql -U sockpuppet -c "VACUUM ANALYZE;"
 
 # Check database size
-docker-compose exec postgres psql -U sockpuppet -c "SELECT pg_database_size('sockpuppet');"
+docker compose exec postgres psql -U sockpuppet -c "SELECT pg_size_pretty(pg_database_size('sockpuppet'));"
 ```
-
-## Support
-
-For deployment assistance:
-- GitHub Issues: Report bugs and request features
-- Documentation: Refer to SETUP.md and API.md
-- Community: Join discussions on GitHub

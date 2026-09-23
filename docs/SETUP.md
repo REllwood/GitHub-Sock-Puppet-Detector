@@ -2,10 +2,10 @@
 
 ## System Requirements
 
-- **Node.js**: Version 20 or higher
+- **Node.js**: Version 20.12 or higher
 - **PostgreSQL**: Version 16 or higher
 - **Redis**: Version 7 or higher
-- **Docker**: Optional, for containerised deployment
+- **Docker**: Optional, for local services and containerised deployment
 - **Git**: For version control
 
 ## Development Setup
@@ -13,8 +13,8 @@
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/sock-puppet-detector.git
-cd sock-puppet-detector
+git clone https://github.com/REllwood/GitHub-Sock-Puppet-Detector.git
+cd GitHub-Sock-Puppet-Detector
 ```
 
 ### 2. Install Dependencies
@@ -23,23 +23,23 @@ cd sock-puppet-detector
 npm install
 ```
 
-### 3. Database Setup
+This also generates the Prisma client (`postinstall`).
+
+### 3. Database and Redis
 
 #### Option A: Using Docker (Recommended)
 
 Start PostgreSQL and Redis using Docker Compose:
 
 ```bash
-docker-compose -f docker-compose.dev.yml up -d
+docker compose -f docker-compose.dev.yml up -d
 ```
 
 This creates:
-- PostgreSQL on port 5432
+- PostgreSQL on port 5432 (user `sockpuppet`, password `sockpuppet_dev_password`, database `sockpuppet`)
 - Redis on port 6379
 
 #### Option B: Local Installation
-
-Install PostgreSQL and Redis locally:
 
 **macOS (Homebrew)**:
 ```bash
@@ -55,7 +55,7 @@ sudo systemctl start postgresql
 sudo systemctl start redis
 ```
 
-Create database:
+Create a database:
 ```bash
 createdb sockpuppet
 ```
@@ -71,15 +71,16 @@ cp .env.example .env
 Edit `.env` with your configuration:
 
 ```bash
-# GitHub App Credentials
+# GitHub App credentials
 GITHUB_APP_ID=123456
 GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"
 GITHUB_WEBHOOK_SECRET=your_webhook_secret_here
-GITHUB_CLIENT_ID=Iv1.abc123def456
+GITHUB_CLIENT_ID=Iv23abc123def456
 GITHUB_CLIENT_SECRET=abc123def456789
+GITHUB_APP_SLUG=sock-puppet-detector-dev
 
 # Database
-DATABASE_URL=postgresql://sockpuppet:password@localhost:5432/sockpuppet
+DATABASE_URL=postgresql://sockpuppet:sockpuppet_dev_password@localhost:5432/sockpuppet
 
 # Redis
 REDIS_URL=redis://localhost:6379
@@ -88,26 +89,48 @@ REDIS_URL=redis://localhost:6379
 NEXTAUTH_SECRET=your_random_secret_here
 NEXTAUTH_URL=http://localhost:3000
 
-# Environment
-NODE_ENV=development
-LOG_LEVEL=info
+# Optional
+ADMIN_GITHUB_LOGINS=your-github-login
 ```
+
+The private key can be given as the PEM contents (with real line breaks or `\n` escapes) or base64-encoded.
 
 **Generate NEXTAUTH_SECRET**:
 ```bash
 openssl rand -base64 32
 ```
 
+#### All settings
+
+| Variable | Required | Description |
+|---|---|---|
+| `GITHUB_APP_ID` | Yes | GitHub App ID |
+| `GITHUB_APP_PRIVATE_KEY` | Yes | GitHub App private key (PEM or base64) |
+| `GITHUB_WEBHOOK_SECRET` | Yes | Webhook secret configured on the app |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | Yes | The GitHub App's OAuth credentials (for dashboard sign-in) |
+| `GITHUB_APP_SLUG` | No | The app's URL name, used for "Install GitHub App" links |
+| `GITHUB_API_URL` | No | GitHub REST API base URL (defaults to `https://api.github.com`) |
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `REDIS_URL` | Yes | Redis URL (`redis://` or `rediss://` for TLS) |
+| `NEXTAUTH_SECRET` | Yes | Secret used to encrypt sessions |
+| `NEXTAUTH_URL` | Yes | Public URL of the app |
+| `ADMIN_GITHUB_LOGINS` | No | Comma-separated GitHub logins that can see every repository |
+| `ANALYSIS_DEBOUNCE_MS` | No | Window for batching webhook-triggered analyses (default 60000) |
+| `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX_REQUESTS` | No | API rate limit per user (default 100 requests per 15 minutes) |
+| `LLM_*`, `OLLAMA_URL` | No | Optional LLM analysis, see [LLM_ANALYSIS.md](LLM_ANALYSIS.md) |
+| `TEST_DATABASE_URL` | Tests only | Database for integration tests (wiped by each run) |
+
 ### 5. GitHub App Configuration
 
 #### Create a GitHub App
 
-1. Go to GitHub Settings > Developer Settings > GitHub Apps
+1. Go to GitHub Settings > Developer settings > GitHub Apps
 2. Click "New GitHub App"
 3. Fill in the details:
    - **GitHub App name**: Sock Puppet Detector (Dev)
    - **Homepage URL**: http://localhost:3000
-   - **Webhook URL**: https://your-ngrok-url.ngrok.io/api/webhooks/github
+   - **Callback URL**: http://localhost:3000/api/auth/callback/github
+   - **Webhook URL**: https://your-tunnel-url.example/api/webhooks/github
    - **Webhook secret**: Generate a random string
    - **Repository permissions**:
      - Issues: Read-only
@@ -116,38 +139,30 @@ openssl rand -base64 32
    - **Subscribe to events**:
      - Issue comment
      - Pull request review comment
-     - Installation
-     - Installation repositories
+
+   Installation events (app installed or uninstalled, repositories added or removed) are sent to the app automatically.
 
 4. Generate a private key (download the .pem file)
-5. Note your App ID and Client ID
+5. Note your App ID, Client ID and the app's URL name, and generate a client secret
+
+Use the GitHub App's client ID and secret for `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`. A separate OAuth App won't work: the dashboard uses the app's user tokens to find which installations each user can access.
 
 #### Configure Local Webhook Testing
 
-For local development, use ngrok:
+For local development, expose your local server with a tunnel such as ngrok:
 
 ```bash
-# Install ngrok
-npm install -g ngrok
-
-# Start ngrok
 ngrok http 3000
 ```
 
-Update your GitHub App webhook URL with the ngrok URL.
+Update your GitHub App webhook URL with the tunnel URL.
 
 ### 6. Database Migration
 
-Run Prisma migrations:
+Apply the migrations:
 
 ```bash
 npm run db:migrate
-```
-
-Generate Prisma client:
-
-```bash
-npm run db:generate
 ```
 
 ### 7. Start the Application
@@ -158,13 +173,13 @@ Start the development server:
 npm run dev
 ```
 
-In a separate terminal, start the worker process:
+In a separate terminal, start the worker process (rebuilds and restarts on changes):
 
 ```bash
 npm run worker:dev
 ```
 
-The application will be available at `http://localhost:3000`.
+The worker loads `.env` itself. The application will be available at `http://localhost:3000`.
 
 ### 8. Install the GitHub App
 
@@ -177,9 +192,32 @@ The application will be available at `http://localhost:3000`.
 
 1. Open `http://localhost:3000`
 2. Sign in with GitHub
-3. View the dashboard
-4. Create a test comment on your repository
-5. Check the dashboard for the analysis
+3. Check your repository appears under Repositories
+4. Click "Analyse Now" to backfill and analyse its recent comments
+5. Create a test comment on your repository; an analysis runs automatically about a minute later
+
+The health endpoint reports database and Redis connectivity:
+
+```bash
+curl http://localhost:3000/api/health
+```
+
+## Running Tests
+
+```bash
+# Unit tests
+npm test
+
+# Integration tests (PostgreSQL and Redis; the test database is wiped)
+createdb sockpuppet_test
+TEST_DATABASE_URL=postgresql://sockpuppet:sockpuppet_dev_password@localhost:5432/sockpuppet_test \
+  npm run test:integration
+
+# Lint, type check and production build
+npm run lint
+npm run typecheck
+npm run build
+```
 
 ## Common Issues
 
@@ -194,7 +232,7 @@ The application will be available at `http://localhost:3000`.
 
 ### Redis Connection Failed
 
-**Problem**: Cannot connect to Redis
+**Problem**: Cannot connect to Redis (`/api/health` reports Redis disconnected)
 
 **Solution**:
 - Check Redis is running: `redis-cli ping`
@@ -205,23 +243,32 @@ The application will be available at `http://localhost:3000`.
 **Problem**: Webhook events not arriving
 
 **Solution**:
-- Check ngrok is running
+- Check the tunnel is running
 - Verify webhook URL in GitHub App settings
-- Check webhook secret matches `.env`
+- Check webhook secret matches `.env` (a mismatch returns 401)
 - View webhook delivery logs in GitHub App settings
 
 ### Worker Not Processing Jobs
 
-**Problem**: Analysis jobs not running
+**Problem**: Analyses stay "pending"
 
 **Solution**:
-- Ensure worker process is running
-- Check Redis connection
-- View worker logs for errors
+- Ensure the worker process is running
+- Check it can reach Redis and PostgreSQL
+- Check `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` are set; the worker logs an error for each failed job
+
+Analyses stuck for more than 30 minutes are marked as timed out, so a new one can be started.
+
+### Dashboard Shows No Repositories
+
+**Problem**: Signed in, but no repositories are listed
+
+**Solution**:
+- Check the app is installed on the repository and you have access to it on GitHub
+- Check `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` belong to the GitHub App (the server logs a 403 from `/user/installations` otherwise)
 
 ## Next Steps
 
 - Read [API Documentation](API.md)
 - Read [Deployment Guide](DEPLOYMENT.md)
 - Explore detection algorithms in `src/lib/detection/`
-- Customise risk scoring weights

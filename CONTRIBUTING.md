@@ -5,7 +5,7 @@ Thank you for your interest in contributing! This document provides guidelines f
 ## Getting Started
 
 1. Fork the repository
-2. Clone your fork: `git clone https://github.com/yourusername/sock-puppet-detector.git`
+2. Clone your fork: `git clone https://github.com/<your-username>/GitHub-Sock-Puppet-Detector.git`
 3. Create a branch: `git checkout -b feature/your-feature-name`
 4. Make your changes
 5. Commit your changes: `git commit -m "Add feature: description"`
@@ -27,7 +27,10 @@ Follow the instructions in [docs/SETUP.md](docs/SETUP.md) to set up your develop
 ## Testing
 
 - Write tests for new features
-- Ensure all tests pass: `npm test`
+- Ensure unit tests pass: `npm test`
+- Ensure integration tests pass (needs PostgreSQL and Redis; the test database is wiped): `TEST_DATABASE_URL=postgresql://... npm run test:integration`
+- Run `npm run typecheck` and `npm run lint`
+- Changes to the detectors or risk scoring should keep the scenarios in `tests/unit/detection-scenarios.test.ts` passing, and add new scenarios where behaviour changes
 - Maintain or improve test coverage
 
 ## Pull Request Guidelines
