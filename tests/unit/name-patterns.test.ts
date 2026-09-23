@@ -28,6 +28,19 @@ describe('Name Pattern Detection', () => {
     expect(result.detected).toBe(false);
   });
 
+  it('should flag the XZ attacker username pattern', () => {
+    expect(detectNamePattern('JiaT75').detected).toBe(true);
+  });
+
+  it('should not treat a birth-year suffix as suspicious', () => {
+    expect(detectNamePattern('john1990').detected).toBe(false);
+  });
+
+  it('should flag randomly generated usernames', () => {
+    expect(detectNamePattern('xkqjzvbwp').detected).toBe(false);
+    expect(detectNamePattern('xkqjzvbwp42').detected).toBe(true);
+  });
+
   it('should detect similar naming patterns across accounts', () => {
     const usernames = ['james123', 'john456', 'robert789'];
 

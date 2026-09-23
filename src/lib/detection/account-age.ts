@@ -11,24 +11,28 @@ export function getAccountAgeInDays(accountCreatedAt: Date | null, now: Date = n
 }
 
 /**
- * Detect accounts based on their age
- * Newer accounts receive higher suspicion scores
+ * Detect accounts based on their age at a reference point in time - normally the account's
+ * first comment in the repository, so an account created days before joining a campaign
+ * still stands out months later. Newer accounts receive higher suspicion scores.
  */
 export function detectAccountAge(
   accountCreatedAt: Date | null,
-  thresholdDays: number = DEFAULT_AGE_THRESHOLD_DAYS
+  thresholdDays: number = DEFAULT_AGE_THRESHOLD_DAYS,
+  firstCommentAt?: Date
 ): DetectionResult {
+  const referenceDate = firstCommentAt ?? new Date();
+
   if (!accountCreatedAt) {
     return {
       detected: false,
       score: 0,
+      evaluated: false,
       reason: 'Account creation date not yet known',
     };
   }
 
-  const now = new Date();
   const ageInDays = Math.floor(
-    (now.getTime() - accountCreatedAt.getTime()) / (1000 * 60 * 60 * 24)
+    (referenceDate.getTime() - accountCreatedAt.getTime()) / (1000 * 60 * 60 * 24)
   );
 
   if (ageInDays < 0) {
@@ -60,10 +64,15 @@ export function detectAccountAge(
   return {
     detected,
     score,
-    reason: detected ? `Account is ${ageInDays} days old` : undefined,
+    reason: detected
+      ? firstCommentAt
+        ? `Account was ${ageInDays} days old when it first commented`
+        : `Account is ${ageInDays} days old`
+      : undefined,
     details: {
       ageInDays,
       createdAt: accountCreatedAt.toISOString(),
+      referenceDate: referenceDate.toISOString(),
       thresholdDays,
     },
   };

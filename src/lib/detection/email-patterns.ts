@@ -1,15 +1,32 @@
 import { DetectionResult } from '@/types/analysis';
 
 // Known disposable email providers
-const DISPOSABLE_EMAIL_PROVIDERS = [
-  'tempmail.com',
+const DISPOSABLE_EMAIL_PROVIDERS = new Set([
   '10minutemail.com',
-  'guerrillamail.com',
-  'mailinator.com',
-  'throwaway.email',
-  'temp-mail.org',
+  'dispostable.com',
+  'emailondeck.com',
   'fakeinbox.com',
-];
+  'getairmail.com',
+  'getnada.com',
+  'guerrillamail.com',
+  'guerrillamail.net',
+  'mailcatch.com',
+  'maildrop.cc',
+  'mailinator.com',
+  'mailnesia.com',
+  'mintemail.com',
+  'mohmal.com',
+  'sharklasers.com',
+  'spamgourmet.com',
+  'temp-mail.org',
+  'tempail.com',
+  'tempmail.com',
+  'tempmailo.com',
+  'tempr.email',
+  'throwaway.email',
+  'trashmail.com',
+  'yopmail.com',
+]);
 
 /**
  * Extract email domain from email address
@@ -27,6 +44,7 @@ export function detectEmailPattern(email: string | null): DetectionResult {
     return {
       detected: false,
       score: 0,
+      evaluated: false,
       details: { hasEmail: false },
     };
   }
@@ -39,12 +57,13 @@ export function detectEmailPattern(email: string | null): DetectionResult {
     return {
       detected: false,
       score: 0,
+      evaluated: false,
       reason: 'Invalid email format',
     };
   }
 
   // Check for disposable email providers
-  if (DISPOSABLE_EMAIL_PROVIDERS.includes(domain)) {
+  if (DISPOSABLE_EMAIL_PROVIDERS.has(domain)) {
     score += 80;
     reasons.push('Uses disposable email provider');
   }
@@ -59,7 +78,7 @@ export function detectEmailPattern(email: string | null): DetectionResult {
   }
 
   // Pattern 2: Very random looking prefix (many consecutive digits)
-  if (/\d{6,}/.test(prefix)) {
+  else if (/\d{6,}/.test(prefix)) {
     score += 25;
     reasons.push('Email prefix contains long digit sequence');
   }

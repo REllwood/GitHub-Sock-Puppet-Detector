@@ -3,30 +3,39 @@ export interface DetectionResult {
   score: number;
   reason?: string;
   details?: Record<string, any>;
+  // false when there was no data to evaluate (e.g. no public email); excluded from the risk score
+  evaluated?: boolean;
+}
+
+export interface AccountDetections {
+  accountAge: DetectionResult;
+  namePattern: DetectionResult;
+  emailPattern: DetectionResult;
+  singleRepo: DetectionResult;
+  coordinatedBehaviour: DetectionResult;
+  temporalClustering: DetectionResult;
+  // Only present when LLM analysis is enabled and ran successfully
+  llmAnalysis?: DetectionResult;
 }
 
 export interface AccountRiskAnalysis {
   accountId: string;
   username: string;
   riskScore: number;
-  detections: {
-    accountAge: DetectionResult;
-    namePattern: DetectionResult;
-    emailPattern: DetectionResult;
-    singleRepo: DetectionResult;
-    coordinatedBehaviour: DetectionResult;
-    temporalClustering: DetectionResult;
-  };
+  detections: AccountDetections;
   flagReasons: string[];
 }
 
 export interface ClusterDetection {
+  type: 'coordination' | 'temporal';
   accounts: string[];
-  strength: number;
-  patterns: string[];
-  timeWindow: {
-    start: Date;
-    end: Date;
+  score: number;
+  strength?: number;
+  patterns?: string[];
+  thread?: number | null;
+  timeWindow?: {
+    start: string;
+    end: string;
   };
 }
 
