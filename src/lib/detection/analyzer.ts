@@ -5,8 +5,9 @@ import { detectEmailPattern } from './email-patterns';
 import { detectSingleRepositoryActivity } from './single-repo';
 import { analyseCoordination, type RepositoryComment } from './coordinated-behaviour';
 import { analyseNewcomerBursts } from './temporal-analysis';
+import { createLLMAnalyzer, toAccountDetections, type LLMAnalyzer } from './llm-analysis';
 import { createAccountRiskAnalysis } from './risk-scorer';
-import type { AccountRiskAnalysis, ClusterDetection } from '@/types/analysis';
+import type { AccountRiskAnalysis, ClusterDetection, DetectionResult } from '@/types/analysis';
 
 // Most recent comments considered per analysis
 const MAX_COMMENTS = 2000;
@@ -14,10 +15,43 @@ const MAX_COMMENTS = 2000;
 const NOT_DETECTED = { detected: false, score: 0 };
 
 /**
+ * Run the optional LLM assessment. Failures are logged and the analysis continues without it.
+ */
+async function runLLMAnalysis(
+  llm: LLMAnalyzer,
+  comments: RepositoryComment[],
+  usernames: string[]
+): Promise<{ detections: Map<string, DetectionResult>; cluster: ClusterDetection | null } | null> {
+  try {
+    const { assessment, includedUsernames } = await llm.assess(comments);
+    const flagged = assessment.suspiciousAccounts.filter(account => account.score >= 50);
+
+    return {
+      detections: toAccountDetections(assessment, includedUsernames, usernames),
+      cluster:
+        flagged.length >= 2
+          ? {
+              type: 'llm',
+              accounts: flagged.map(account => account.username).sort(),
+              score: Math.max(...flagged.map(account => account.score)),
+              patterns: assessment.summary ? [assessment.summary] : [],
+            }
+          : null,
+    };
+  } catch (error) {
+    console.warn(`LLM analysis (${llm.provider}) failed, continuing without it:`, error);
+    return null;
+  }
+}
+
+/**
  * Analyse every account that has commented on a repository, in the context of the
  * repository's other commenters.
  */
-export async function analyzeRepository(repositoryId: string): Promise<{
+export async function analyzeRepository(
+  repositoryId: string,
+  options: { llm?: LLMAnalyzer | null } = {}
+): Promise<{
   accountAnalyses: AccountRiskAnalysis[];
   clusters: ClusterDetection[];
 }> {
@@ -62,6 +96,15 @@ export async function analyzeRepository(repositoryId: string): Promise<{
     }
   }
 
+  const llm = options.llm === undefined ? createLLMAnalyzer() : options.llm;
+  const llmResult = llm
+    ? await runLLMAnalysis(
+        llm,
+        repositoryComments,
+        Array.from(accounts.values()).map(({ account }) => account.username)
+      )
+    : null;
+
   const accountAnalyses = Array.from(accounts.values()).map(({ account, first }) =>
     createAccountRiskAnalysis(account.id, account.username, {
       accountAge: detectAccountAge(account.createdAt, undefined, first),
@@ -74,11 +117,16 @@ export async function analyzeRepository(repositoryId: string): Promise<{
       ),
       coordinatedBehaviour: coordination.byAccount.get(account.username) ?? NOT_DETECTED,
       temporalClustering: bursts.byAccount.get(account.username) ?? NOT_DETECTED,
+      llmAnalysis: llmResult?.detections.get(account.username),
     })
   );
 
   return {
     accountAnalyses: accountAnalyses.sort((a, b) => b.riskScore - a.riskScore),
-    clusters: [...coordination.clusters, ...bursts.clusters],
+    clusters: [
+      ...coordination.clusters,
+      ...bursts.clusters,
+      ...(llmResult?.cluster ? [llmResult.cluster] : []),
+    ],
   };
 }

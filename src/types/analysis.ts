@@ -27,7 +27,7 @@ export interface AccountRiskAnalysis {
 }
 
 export interface ClusterDetection {
-  type: 'coordination' | 'temporal';
+  type: 'coordination' | 'temporal' | 'llm';
   accounts: string[];
   score: number;
   strength?: number;
