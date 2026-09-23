@@ -1,8 +1,8 @@
 'use client';
 
-import { Suspense } from 'react';
-import { signIn } from 'next-auth/react';
-import { useSearchParams } from 'next/navigation';
+import { Suspense, useEffect } from 'react';
+import { signIn, useSession } from 'next-auth/react';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 export default function SignIn() {
   return (
@@ -25,6 +25,16 @@ function SignInCard() {
   const callbackUrl =
     requested.startsWith('/') && !requested.startsWith('//') ? requested : '/dashboard';
   const error = searchParams.get('error');
+  const router = useRouter();
+  const { data: session, status } = useSession();
+
+  // Already signed in (e.g. returning with a valid session): carry on to the destination
+  useEffect(() => {
+    // A session whose GitHub token couldn't be refreshed must sign in again (avoids a redirect loop)
+    if (status === 'authenticated' && !session?.error && !error) {
+      router.replace(callbackUrl);
+    }
+  }, [status, session?.error, error, callbackUrl, router]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
@@ -36,9 +46,9 @@ function SignInCard() {
           </p>
         </div>
 
-        {error && (
+        {(error || session?.error) && (
           <p className="mb-6 rounded-lg bg-red-50 dark:bg-red-900/20 p-3 text-sm text-red-700 dark:text-red-300">
-            {ERROR_MESSAGES[error] ?? 'Sign-in failed. Please try again.'}
+            {ERROR_MESSAGES[error ?? 'SessionExpired'] ?? 'Sign-in failed. Please try again.'}
           </p>
         )}
 

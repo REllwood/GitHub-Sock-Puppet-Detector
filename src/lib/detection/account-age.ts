@@ -2,6 +2,10 @@ import { DetectionResult } from '@/types/analysis';
 
 const DEFAULT_AGE_THRESHOLD_DAYS = 90;
 
+export function formatDays(days: number): string {
+  return `${days} day${days === 1 ? '' : 's'}`;
+}
+
 /**
  * Age of a GitHub account in whole days, or null if the creation date isn't known yet
  */
@@ -66,8 +70,8 @@ export function detectAccountAge(
     score,
     reason: detected
       ? firstCommentAt
-        ? `Account was ${ageInDays} days old when it first commented`
-        : `Account is ${ageInDays} days old`
+        ? `Account was ${formatDays(ageInDays)} old when it first commented`
+        : `Account is ${formatDays(ageInDays)} old`
       : undefined,
     details: {
       ageInDays,

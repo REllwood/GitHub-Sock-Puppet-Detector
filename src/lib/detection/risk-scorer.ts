@@ -99,11 +99,15 @@ export function getRiskColor(level: RiskLevel): string {
 }
 
 /**
- * Generate flag reasons from detection results
+ * Generate flag reasons from detection results, strongest contribution to the score first
  */
 export function generateFlagReasons(detections: AccountDetections): string[] {
   return presentDetections(detections)
     .filter(([, detection]) => detection.detected && detection.reason)
+    .sort(
+      ([keyA, a], [keyB, b]) =>
+        b.score * DETECTION_WEIGHTS[keyB] - a.score * DETECTION_WEIGHTS[keyA]
+    )
     .map(([key, detection]) => `${FLAG_LABELS[key]}: ${detection.reason}`);
 }
 

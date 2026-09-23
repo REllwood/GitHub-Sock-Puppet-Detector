@@ -1,4 +1,4 @@
-import { detectAccountAge, getAccountAgeInDays } from '@/lib/detection/account-age';
+import { detectAccountAge, formatDays, getAccountAgeInDays } from '@/lib/detection/account-age';
 
 describe('Account Age Detection', () => {
   it('should detect very new accounts (< 7 days)', () => {
@@ -43,5 +43,10 @@ describe('Account Age Detection', () => {
 
     expect(getAccountAgeInDays(new Date('2026-09-13T00:00:00Z'), now)).toBe(10);
     expect(getAccountAgeInDays(null, now)).toBeNull();
+  });
+
+  it('pluralises day counts', () => {
+    expect(formatDays(1)).toBe('1 day');
+    expect(formatDays(2)).toBe('2 days');
   });
 });

@@ -1,6 +1,12 @@
 import Link from 'next/link';
+import { getAppInstallUrl } from '@/lib/app-config';
+
+// Reads GITHUB_APP_SLUG at runtime
+export const dynamic = 'force-dynamic';
 
 export default function Home() {
+  const installUrl = getAppInstallUrl();
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
       <div className="container mx-auto px-4 py-16">
@@ -19,14 +25,16 @@ export default function Home() {
             >
               Go to Dashboard
             </Link>
-            <a
-              href="https://github.com/apps/sock-puppet-detector"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-6 py-3 bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
-            >
-              Install GitHub App
-            </a>
+            {installUrl && (
+              <a
+                href={installUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-6 py-3 bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+              >
+                Install GitHub App
+              </a>
+            )}
           </div>
           <div className="grid md:grid-cols-3 gap-6 text-left">
             <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">

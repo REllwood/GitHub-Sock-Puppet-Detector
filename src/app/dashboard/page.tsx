@@ -2,6 +2,7 @@ import Link from 'next/link';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { getScopedRiskDistribution } from '@/lib/risk-summary';
+import { percentage } from '@/lib/format';
 import { requireViewer } from '@/lib/viewer';
 
 export const dynamic = 'force-dynamic';
@@ -80,14 +81,14 @@ export default async function DashboardPage() {
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">Low Risk</span>
               <span className="text-sm text-gray-600 dark:text-gray-400">
-                {stats.riskDistribution.low} accounts
+                {stats.riskDistribution.low} account{stats.riskDistribution.low === 1 ? '' : 's'}
               </span>
             </div>
             <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
               <div
                 className="bg-green-600 h-2 rounded-full"
                 style={{
-                  width: `${(stats.riskDistribution.low / stats.totalAccounts) * 100}%`,
+                  width: `${percentage(stats.riskDistribution.low, stats.totalAccounts)}%`,
                 }}
               ></div>
             </div>
@@ -95,14 +96,15 @@ export default async function DashboardPage() {
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">Medium Risk</span>
               <span className="text-sm text-gray-600 dark:text-gray-400">
-                {stats.riskDistribution.medium} accounts
+                {stats.riskDistribution.medium} account
+                {stats.riskDistribution.medium === 1 ? '' : 's'}
               </span>
             </div>
             <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
               <div
                 className="bg-yellow-600 h-2 rounded-full"
                 style={{
-                  width: `${(stats.riskDistribution.medium / stats.totalAccounts) * 100}%`,
+                  width: `${percentage(stats.riskDistribution.medium, stats.totalAccounts)}%`,
                 }}
               ></div>
             </div>
@@ -110,14 +112,14 @@ export default async function DashboardPage() {
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">High Risk</span>
               <span className="text-sm text-gray-600 dark:text-gray-400">
-                {stats.riskDistribution.high} accounts
+                {stats.riskDistribution.high} account{stats.riskDistribution.high === 1 ? '' : 's'}
               </span>
             </div>
             <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
               <div
                 className="bg-orange-600 h-2 rounded-full"
                 style={{
-                  width: `${(stats.riskDistribution.high / stats.totalAccounts) * 100}%`,
+                  width: `${percentage(stats.riskDistribution.high, stats.totalAccounts)}%`,
                 }}
               ></div>
             </div>
@@ -125,14 +127,15 @@ export default async function DashboardPage() {
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">Critical Risk</span>
               <span className="text-sm text-gray-600 dark:text-gray-400">
-                {stats.riskDistribution.critical} accounts
+                {stats.riskDistribution.critical} account
+                {stats.riskDistribution.critical === 1 ? '' : 's'}
               </span>
             </div>
             <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
               <div
                 className="bg-red-600 h-2 rounded-full"
                 style={{
-                  width: `${(stats.riskDistribution.critical / stats.totalAccounts) * 100}%`,
+                  width: `${percentage(stats.riskDistribution.critical, stats.totalAccounts)}%`,
                 }}
               ></div>
             </div>
@@ -144,7 +147,8 @@ export default async function DashboardPage() {
           <div className="space-y-4">
             {stats.recentAnalyses.length === 0 ? (
               <p className="text-gray-600 dark:text-gray-400 text-sm">
-                No analyses yet. Install the GitHub App on a repository to start.
+                No analyses yet. Install the GitHub App on a repository, then start an analysis from
+                the repositories page or wait for new comments.
               </p>
             ) : (
               stats.recentAnalyses.map(analysis => (
@@ -161,7 +165,8 @@ export default async function DashboardPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-gray-600 dark:text-gray-400">
-                      {analysis._count.accountResults} accounts analysed
+                      {analysis._count.accountResults} account
+                      {analysis._count.accountResults === 1 ? '' : 's'} analysed
                     </span>
                     <span
                       className={`text-xs px-2 py-1 rounded ${
@@ -181,10 +186,10 @@ export default async function DashboardPage() {
           </div>
           <div className="mt-4">
             <Link
-              href="/dashboard/repositories"
+              href="/dashboard/analysis"
               className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
             >
-              View all repositories →
+              View all analyses →
             </Link>
           </div>
         </div>
