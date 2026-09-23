@@ -26,6 +26,12 @@ export async function closeRateLimiter() {
   globalForRateLimit.rateLimitRedis = undefined;
   if (!redis || redis.status === 'end') return;
 
+  // Between reconnect attempts there's no open socket, so disconnecting emits no 'end' event
+  if (redis.status === 'reconnecting') {
+    redis.disconnect();
+    return;
+  }
+
   await new Promise<void>(resolve => {
     redis.once('end', () => resolve());
     redis.disconnect();

@@ -20,4 +20,15 @@ describe('rate limiting', () => {
     );
     errorSpy.mockRestore();
   });
+
+  it('closes promptly while the client is between reconnect attempts', async () => {
+    // The client from the previous test is still retrying the unreachable Redis;
+    // let it settle into its reconnect back-off
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    const started = Date.now();
+    await closeRateLimiter();
+
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
 });
