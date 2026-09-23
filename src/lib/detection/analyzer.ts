@@ -200,33 +200,3 @@ export async function analyzeRepository(repositoryId: string): Promise<{
     clusters,
   };
 }
-
-/**
- * Save analysis results to database
- */
-export async function saveAnalysisResults(
-  analysisId: string,
-  accountAnalyses: AccountRiskAnalysis[]
-): Promise<void> {
-  // Save account analysis results
-  for (const analysis of accountAnalyses) {
-    await prisma.accountAnalysis.create({
-      data: {
-        analysisId,
-        accountId: analysis.accountId,
-        riskScore: analysis.riskScore,
-        detections: analysis.detections as any,
-      },
-    });
-
-    // Update account risk score
-    await prisma.account.update({
-      where: { id: analysis.accountId },
-      data: {
-        riskScore: analysis.riskScore,
-        flagReasons: analysis.flagReasons,
-        lastAnalysedAt: new Date(),
-      },
-    });
-  }
-}

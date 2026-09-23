@@ -1,137 +1,68 @@
 import { Worker, Job } from 'bullmq';
 import { prisma } from '@/lib/db';
+import { markAnalysisFailed, runRepositoryAnalysis, startAnalysis } from '@/lib/analysis/run';
 import { createGitHubClient } from '@/lib/github/api-client';
+import { needsProfileSync, syncAccountProfile } from '@/lib/github/profile-sync';
 import { getRedisConnectionOptions } from './connection';
-import { QUEUE_NAMES, type AnalyzeCommentJob, type AnalyzeRepositoryJob } from './setup';
+import {
+  QUEUE_NAMES,
+  scheduleRepositoryAnalysis,
+  type AnalyzeCommentJob,
+  type AnalyzeRepositoryJob,
+} from './setup';
 
-// Comment analysis processor
-async function processCommentAnalysis(job: Job<AnalyzeCommentJob>) {
-  console.log(`Processing comment analysis job ${job.id}:`, job.data);
+/**
+ * New comment: sync the author's GitHub profile if needed, then schedule a
+ * (debounced) analysis of the repository.
+ */
+export async function processCommentAnalysis(job: Job<AnalyzeCommentJob>) {
+  const { commentId, installationId } = job.data;
 
-  const { commentId, accountId, installationId } = job.data;
+  const comment = await prisma.comment.findUnique({
+    where: { id: commentId },
+    include: { account: true },
+  });
 
-  try {
-    // Get comment and account from database
-    const [comment, account] = await Promise.all([
-      prisma.comment.findUnique({ where: { id: commentId } }),
-      prisma.account.findUnique({ where: { id: accountId } }),
-    ]);
-
-    if (!comment || !account) {
-      throw new Error('Comment or account not found');
-    }
-
-    // Create GitHub client
-    const githubClient = await createGitHubClient(installationId);
-
-    // Fetch the full profile: webhook payloads don't include the creation date or email
-    const userData = await githubClient.getUser(account.username);
-
-    // Update account profile data
-    await prisma.account.update({
-      where: { id: accountId },
-      data: {
-        profileData: JSON.parse(JSON.stringify(userData)),
-        email: userData.email || account.email,
-        accountType: userData.type,
-        createdAt: new Date(userData.created_at),
-        profileSyncedAt: new Date(),
-      },
-    });
-
-    console.log(`Updated profile for account ${account.username}`);
-
-    // TODO: Run detection algorithms
-    // This will be implemented in the detection-algorithms todo
-
-    return { success: true, accountId };
-  } catch (error) {
-    console.error(`Failed to analyze comment ${commentId}:`, error);
-    throw error;
+  if (!comment) {
+    return { skipped: 'Comment no longer exists' };
   }
+
+  let profile: 'synced' | 'not_found' | 'fresh' = 'fresh';
+  if (needsProfileSync(comment.account)) {
+    const client = await createGitHubClient(installationId);
+    profile = await syncAccountProfile(client, comment.account);
+  }
+
+  await scheduleRepositoryAnalysis(comment.repositoryId);
+
+  return { accountId: comment.accountId, profile };
 }
 
-// Repository analysis processor
-async function processRepositoryAnalysis(job: Job<AnalyzeRepositoryJob>) {
-  console.log(`Processing repository analysis job ${job.id}:`, job.data);
+/**
+ * Repository analysis: backfill, profile sync, detection, results and alerts
+ */
+export async function processRepositoryAnalysis(job: Job<AnalyzeRepositoryJob>) {
+  const repository = await prisma.repository.findUnique({
+    where: { id: job.data.repositoryId },
+    select: { id: true },
+  });
 
-  const { repositoryId, triggeredBy } = job.data;
+  if (!repository) {
+    return { skipped: 'Repository no longer exists' };
+  }
+
+  const analysis = await startAnalysis(job.data);
+
+  // Retries reuse the same analysis record
+  if (!job.data.analysisId) {
+    await job.updateData({ ...job.data, analysisId: analysis.id });
+  }
 
   try {
-    // Get repository from database
-    const repository = await prisma.repository.findUnique({
-      where: { id: repositoryId },
-      include: {
-        analyses: {
-          where: { status: 'processing' },
-          take: 1,
-        },
-      },
-    });
-
-    if (!repository) {
-      throw new Error('Repository not found');
-    }
-
-    // Check if there's already an analysis in progress
-    if (repository.analyses.length > 0) {
-      console.log(`Analysis already in progress for repository ${repository.fullName}`);
-      return { success: true, skipped: true };
-    }
-
-    // Create analysis record
-    const analysis = await prisma.analysis.create({
-      data: {
-        repositoryId,
-        triggeredBy,
-        status: 'processing',
-      },
-    });
-
-    // Get recent comments for this repository
-    const comments = await prisma.comment.findMany({
-      where: { repositoryId },
-      include: { account: true },
-      orderBy: { createdAt: 'desc' },
-      take: 1000, // Analyze last 1000 comments
-    });
-
-    console.log(`Analyzing ${comments.length} comments for repository ${repository.fullName}`);
-
-    // TODO: Run comprehensive analysis on all comments
-    // This will be implemented in the detection-algorithms todo
-
-    // Update analysis status
-    await prisma.analysis.update({
-      where: { id: analysis.id },
-      data: {
-        status: 'completed',
-        completedAt: new Date(),
-      },
-    });
-
-    console.log(`Completed analysis ${analysis.id} for repository ${repository.fullName}`);
-
-    return { success: true, analysisId: analysis.id, commentsAnalyzed: comments.length };
+    return await runRepositoryAnalysis({ ...job.data, analysisId: analysis.id });
   } catch (error) {
-    console.error(`Failed to analyze repository ${repositoryId}:`, error);
-
-    // Update analysis status to failed if it exists
-    const analysis = await prisma.analysis.findFirst({
-      where: { repositoryId, status: 'processing' },
-    });
-
-    if (analysis) {
-      await prisma.analysis.update({
-        where: { id: analysis.id },
-        data: {
-          status: 'failed',
-          errorMessage: error instanceof Error ? error.message : 'Unknown error',
-          completedAt: new Date(),
-        },
-      });
-    }
-
+    console.error(`Analysis ${analysis.id} failed:`, error);
+    await markAnalysisFailed(analysis.id, error);
     throw error;
   }
 }
@@ -147,13 +78,13 @@ export function startWorkers(): Worker[] {
   const commentAnalysisWorker = new Worker<AnalyzeCommentJob>(
     QUEUE_NAMES.ANALYZE_COMMENT,
     processCommentAnalysis,
-    { connection: getRedisConnectionOptions() }
+    { connection: getRedisConnectionOptions(), concurrency: 5 }
   );
 
   const repositoryAnalysisWorker = new Worker<AnalyzeRepositoryJob>(
     QUEUE_NAMES.ANALYZE_REPOSITORY,
     processRepositoryAnalysis,
-    { connection: getRedisConnectionOptions() }
+    { connection: getRedisConnectionOptions(), concurrency: 2 }
   );
 
   commentAnalysisWorker.on('completed', job => {
