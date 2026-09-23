@@ -1,9 +1,18 @@
 'use client';
 
+import { Suspense } from 'react';
 import { signIn } from 'next-auth/react';
 import { useSearchParams } from 'next/navigation';
 
 export default function SignIn() {
+  return (
+    <Suspense>
+      <SignInCard />
+    </Suspense>
+  );
+}
+
+function SignInCard() {
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
 

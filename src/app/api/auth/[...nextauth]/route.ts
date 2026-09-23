@@ -2,14 +2,14 @@ import NextAuth, { NextAuthOptions } from 'next-auth';
 import GithubProvider from 'next-auth/providers/github';
 
 if (!process.env.GITHUB_CLIENT_ID || !process.env.GITHUB_CLIENT_SECRET) {
-  throw new Error('GitHub OAuth credentials are not configured');
+  console.warn('GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET are not set - GitHub sign-in will fail');
 }
 
 const authOptions: NextAuthOptions = {
   providers: [
     GithubProvider({
-      clientId: process.env.GITHUB_CLIENT_ID,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET,
+      clientId: process.env.GITHUB_CLIENT_ID ?? '',
+      clientSecret: process.env.GITHUB_CLIENT_SECRET ?? '',
       authorization: {
         params: {
           scope: 'read:user user:email',
