@@ -80,7 +80,7 @@ function comment(acc: ReturnType<typeof account>, content: string, at: number, t
 async function analyse(comments: ReturnType<typeof comment>[]) {
   mockFindUnique.mockResolvedValue({ fullName: REPO });
   mockFindMany.mockResolvedValue(comments);
-  const { accountAnalyses, clusters } = await analyzeRepository('repo-1');
+  const { accountAnalyses, clusters } = await analyzeRepository('repo-1', { llm: null });
   const byName = Object.fromEntries(accountAnalyses.map(a => [a.username, a]));
   return { byName, accountAnalyses, clusters };
 }
