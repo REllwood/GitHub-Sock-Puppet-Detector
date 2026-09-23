@@ -1,54 +1,39 @@
 import Link from 'next/link';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
-import { getRiskLevel } from '@/lib/detection/risk-scorer';
+import { getScopedRiskDistribution } from '@/lib/risk-summary';
+import { requireViewer } from '@/lib/viewer';
 
 export const dynamic = 'force-dynamic';
 
-async function getDashboardStats() {
-  const [totalRepos, totalAccounts, totalAlerts, recentAnalyses] = await Promise.all([
-    prisma.repository.count(),
-    prisma.account.count(),
-    prisma.alert.count({ where: { dismissed: false } }),
+async function getDashboardStats(repositoryFilter: Prisma.RepositoryWhereInput) {
+  const [totalRepos, totalAlerts, recentAnalyses, risk] = await Promise.all([
+    prisma.repository.count({ where: repositoryFilter }),
+    prisma.alert.count({ where: { dismissed: false, repository: repositoryFilter } }),
     prisma.analysis.findMany({
+      where: { repository: repositoryFilter },
       take: 5,
       orderBy: { createdAt: 'desc' },
       include: {
         repository: true,
-        accountResults: {
-          include: { account: true },
-        },
+        _count: { select: { accountResults: true } },
       },
     }),
+    getScopedRiskDistribution(repositoryFilter),
   ]);
-
-  // Get risk distribution
-  const accounts = await prisma.account.findMany({
-    select: { riskScore: true },
-  });
-
-  const riskDistribution = {
-    low: 0,
-    medium: 0,
-    high: 0,
-    critical: 0,
-  };
-
-  accounts.forEach(account => {
-    const level = getRiskLevel(account.riskScore);
-    riskDistribution[level]++;
-  });
 
   return {
     totalRepos,
-    totalAccounts,
+    totalAccounts: risk.totalAccounts,
     totalAlerts,
     recentAnalyses,
-    riskDistribution,
+    riskDistribution: risk.distribution,
   };
 }
 
 export default async function DashboardPage() {
-  const stats = await getDashboardStats();
+  const { repositoryFilter } = await requireViewer('/dashboard');
+  const stats = await getDashboardStats(repositoryFilter);
 
   return (
     <div>
@@ -176,7 +161,7 @@ export default async function DashboardPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-gray-600 dark:text-gray-400">
-                      {analysis.accountResults.length} accounts analysed
+                      {analysis._count.accountResults} accounts analysed
                     </span>
                     <span
                       className={`text-xs px-2 py-1 rounded ${

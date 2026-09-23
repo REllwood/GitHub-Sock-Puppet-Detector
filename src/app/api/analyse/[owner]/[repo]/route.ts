@@ -2,18 +2,22 @@ import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { jsonResponse } from '@/lib/http';
 import { requestRepositoryAnalysis } from '@/lib/analysis/service';
+import { authoriseApiRequest, isErrorResponse } from '@/lib/api-auth';
 
 export async function POST(
   req: NextRequest,
   { params }: { params: { owner: string; repo: string } }
 ) {
   try {
+    const auth = await authoriseApiRequest(req);
+    if (isErrorResponse(auth)) return auth;
+
     const { owner, repo } = params;
     const fullName = `${owner}/${repo}`;
 
-    // Find repository
+    // Find repository (only if the viewer can access it)
     const repository = await prisma.repository.findFirst({
-      where: { fullName },
+      where: { fullName, ...auth.repositoryFilter },
     });
 
     if (!repository) {
@@ -44,12 +48,15 @@ export async function GET(
   { params }: { params: { owner: string; repo: string } }
 ) {
   try {
+    const auth = await authoriseApiRequest(req);
+    if (isErrorResponse(auth)) return auth;
+
     const { owner, repo } = params;
     const fullName = `${owner}/${repo}`;
 
-    // Find repository
+    // Find repository (only if the viewer can access it)
     const repository = await prisma.repository.findFirst({
-      where: { fullName },
+      where: { fullName, ...auth.repositoryFilter },
       include: {
         analyses: {
           orderBy: { createdAt: 'desc' },
