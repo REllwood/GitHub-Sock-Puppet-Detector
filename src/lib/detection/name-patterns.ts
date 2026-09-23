@@ -1,6 +1,6 @@
 import { DetectionResult } from '@/types/analysis';
 
-// Common first names for pattern matching (subset for demo)
+// Common first names for pattern matching (subset)
 const COMMON_FIRST_NAMES = [
   'james',
   'john',
@@ -27,64 +27,63 @@ const COMMON_FIRST_NAMES = [
   'hans',
 ];
 
+const GENERIC_WORDS = ['user', 'test', 'admin', 'developer', 'account', 'temp', 'demo', 'guest'];
+
 /**
- * Detect suspicious naming patterns based on XZ attack
- * Patterns: firstname+digits, lowercase+digits, etc.
+ * Detect suspicious naming patterns based on the XZ attack (e.g. "JiaT75").
+ * Username patterns are weak evidence on their own - plenty of genuine users have digits in
+ * their names - so scores here are deliberately modest and don't stack overlapping rules.
  */
 export function detectNamePattern(username: string): DetectionResult {
   const lower = username.toLowerCase();
   let score = 0;
   const reasons: string[] = [];
 
-  // Pattern 1: Common first name + 2-6 digits (e.g., "jigar123", "dennis4545")
-  const firstNameDigitsPattern = /^[a-z]+\d{2,6}$/;
-  if (firstNameDigitsPattern.test(lower)) {
-    const name = lower.replace(/\d+$/, '');
-    if (COMMON_FIRST_NAMES.includes(name)) {
-      score += 60;
+  const wordDigits = lower.match(/^([a-z]+)(\d{2,6})$/);
+
+  if (wordDigits) {
+    const [, word] = wordDigits;
+
+    if (GENERIC_WORDS.some(generic => word.startsWith(generic))) {
+      // e.g. "user123", "test4567"
+      score = 70;
+      reasons.push('Generic username followed by digits');
+    } else if (COMMON_FIRST_NAMES.includes(word)) {
+      // e.g. "jigar123", "dennis4545"
+      score = 45;
       reasons.push('Common first name followed by digits');
     } else {
-      score += 30;
+      // e.g. "JiaT75"
+      score = 35;
       reasons.push('Word followed by digits');
+    }
+
+    // Four digits between 1940 and the current year read as a birth or graduation year
+    const digits = Number(wordDigits[2]);
+    if (wordDigits[2].length === 4 && digits >= 1940 && digits <= new Date().getFullYear()) {
+      score = Math.max(0, score - 15);
+      reasons.push('Digits look like a year');
     }
   }
 
-  // Pattern 2: Capitalized name + digits (e.g., "James123")
-  const capitalizedNameDigitsPattern = /^[A-Z][a-z]+\d{2,6}$/;
-  if (capitalizedNameDigitsPattern.test(username)) {
-    score += 40;
-    reasons.push('Capitalized name followed by digits');
+  // Repeating digits, e.g. "bob111"
+  if (/(\d)\1{2,}$/.test(lower)) {
+    score += 10;
+    reasons.push('Ends in repeating digits');
   }
 
-  // Pattern 3: All lowercase + exactly 4 digits (common pattern)
-  const fourDigitPattern = /^[a-z]+\d{4}$/;
-  if (fourDigitPattern.test(lower)) {
-    score += 35;
-    reasons.push('Lowercase word with exactly 4 digits');
+  // Long runs of consonants suggest a randomly generated name, e.g. "xkqjzvbw"
+  if (/[bcdfghjklmnpqrstvwxz]{6,}/.test(lower)) {
+    score += 30;
+    reasons.push('Username looks randomly generated');
   }
 
-  // Pattern 4: Name ending in sequential digits (e.g., "user123")
-  const sequentialPattern = /(\d)\1{2,}$/;
-  if (sequentialPattern.test(username)) {
-    score += 25;
-    reasons.push('Contains repeating sequential digits');
-  }
-
-  // Pattern 5: Very generic patterns like "user123", "test456"
-  const genericWords = ['user', 'test', 'admin', 'developer', 'account', 'temp', 'demo'];
-  const startsWithGeneric = genericWords.some(word => lower.startsWith(word));
-  if (startsWithGeneric && /\d+$/.test(lower)) {
-    score += 50;
-    reasons.push('Generic username followed by digits');
-  }
-
-  // Cap score at 100
   score = Math.min(100, score);
 
   return {
     detected: score > 30,
     score,
-    reason: reasons.length > 0 ? reasons.join('; ') : undefined,
+    reason: score > 0 ? reasons.join('; ') : undefined,
     details: {
       username,
       patterns: reasons,
@@ -131,7 +130,7 @@ export function detectSimilarNamingPatterns(usernames: string[]): {
   });
 
   const results = Array.from(clusters.entries())
-    .filter(([_, accounts]) => accounts.length >= 2)
+    .filter(([, accounts]) => accounts.length >= 2)
     .map(([pattern, accounts]) => {
       // Score based on cluster size
       const score = Math.min(100, 30 + accounts.length * 15);

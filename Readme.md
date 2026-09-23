@@ -166,13 +166,20 @@ See [API.md](docs/API.md) for detailed API documentation.
 
 ## Detection Algorithms
 
-1. **Account Age** (15% weight): Flags accounts < 90 days old
-2. **Name Pattern** (18% weight): Detects firstname+digits patterns
-3. **Email Pattern** (12% weight): Identifies shared domains and disposable emails
-4. **Single Repository** (8% weight): Finds accounts focused on one repo
-5. **Coordinated Behaviour** (25% weight): Network analysis and writing similarity
-6. **Temporal Clustering** (8% weight): Detects time-based coordination
-7. **LLM Analysis** (14% weight, optional): AI-powered semantic and style analysis
+Each account that comments on a monitored repository is scored by the detectors below. The
+risk score (0-100) is the weighted average of the detectors that had data to work with. For
+example, accounts without a public email are not penalised or rewarded by the email detector.
+
+1. **Account Age** (20%): How old the account was when it first commented in the repository (flags < 90 days)
+2. **Name Pattern** (10%): Word + digits patterns such as `JiaT75`, generic names like `user123`, random-looking names. Deliberately weak evidence on its own
+3. **Email Pattern** (10%): Disposable email providers and throwaway-looking addresses (public email only)
+4. **Activity Focus** (10%): Recent public GitHub activity concentrated on this one repository, or an empty profile
+5. **Coordinated Behaviour** (30%): Accounts posting identical or similar messaging, especially on the same threads, and groups of accounts acting together
+6. **Newcomer Bursts** (20%): Several accounts appearing in the repository for the first time on the same thread within hours
+7. **LLM Analysis** (20%, optional): AI-powered semantic and social engineering analysis
+
+Risk levels: **low** 0-30, **medium** 31-60, **high** 61-85, **critical** 86-100. An alert is
+raised when an account reaches high or critical risk.
 
 ### LLM Analysis (Optional)
 

@@ -1,21 +1,26 @@
-import { DetectionResult, AccountRiskAnalysis, RiskLevel } from '@/types/analysis';
+import type {
+  AccountDetections,
+  AccountRiskAnalysis,
+  DetectionResult,
+  RiskLevel,
+} from '@/types/analysis';
 
 /**
- * Detection weights for risk calculation
- * Note: LLM weight is optional and will be 0 if LLM analysis is disabled
+ * Relative weight of each detector. The risk score is the weighted average of the detectors
+ * that ran, so the LLM weight only applies when LLM analysis is enabled and succeeded.
  */
-const DETECTION_WEIGHTS = {
-  accountAge: 0.15,
-  namePattern: 0.18,
-  emailPattern: 0.12,
-  singleRepo: 0.08,
-  coordinatedBehaviour: 0.25,
-  temporalClustering: 0.08,
-  llmAnalysis: 0.14, // Optional - only used if enabled
-} as const;
+const DETECTION_WEIGHTS: Record<keyof AccountDetections, number> = {
+  accountAge: 0.2,
+  namePattern: 0.1,
+  emailPattern: 0.1,
+  singleRepo: 0.1,
+  coordinatedBehaviour: 0.3,
+  temporalClustering: 0.2,
+  llmAnalysis: 0.2,
+};
 
 /**
- * Risk level thresholds
+ * Risk level ranges (inclusive upper bounds)
  */
 const RISK_THRESHOLDS = {
   low: { min: 0, max: 30 },
@@ -24,48 +29,53 @@ const RISK_THRESHOLDS = {
   critical: { min: 86, max: 100 },
 } as const;
 
-/**
- * Calculate weighted risk score from detection results
- */
-export function calculateRiskScore(detections: {
-  accountAge: DetectionResult;
-  namePattern: DetectionResult;
-  emailPattern: DetectionResult;
-  singleRepo: DetectionResult;
-  coordinatedBehaviour: DetectionResult;
-  temporalClustering: DetectionResult;
-  llmAnalysis?: DetectionResult;
-}): number {
-  // Base score calculation
-  let weightedSum =
-    detections.accountAge.score * DETECTION_WEIGHTS.accountAge +
-    detections.namePattern.score * DETECTION_WEIGHTS.namePattern +
-    detections.emailPattern.score * DETECTION_WEIGHTS.emailPattern +
-    detections.singleRepo.score * DETECTION_WEIGHTS.singleRepo +
-    detections.coordinatedBehaviour.score * DETECTION_WEIGHTS.coordinatedBehaviour +
-    detections.temporalClustering.score * DETECTION_WEIGHTS.temporalClustering;
+const FLAG_LABELS: Record<keyof AccountDetections, string> = {
+  accountAge: 'Age',
+  namePattern: 'Name',
+  emailPattern: 'Email',
+  singleRepo: 'Activity',
+  coordinatedBehaviour: 'Coordination',
+  temporalClustering: 'Temporal',
+  llmAnalysis: 'LLM',
+};
 
-  // Add LLM score if available
-  if (detections.llmAnalysis && detections.llmAnalysis.score > 0) {
-    weightedSum += detections.llmAnalysis.score * DETECTION_WEIGHTS.llmAnalysis;
-    
-    // Normalize to account for the extra weight
-    weightedSum = (weightedSum / 1.14) * 1.0; // Adjust for the new total weight
+function presentDetections(detections: AccountDetections) {
+  return (Object.keys(DETECTION_WEIGHTS) as Array<keyof AccountDetections>)
+    .map(key => [key, detections[key]] as const)
+    .filter(
+      (entry): entry is readonly [keyof AccountDetections, DetectionResult] =>
+        Boolean(entry[1]) && entry[1]?.evaluated !== false
+    );
+}
+
+/**
+ * Calculate weighted risk score (0 - 100) from detection results. Detectors that had no
+ * data to evaluate (e.g. no public email) are left out rather than counted as zero.
+ */
+export function calculateRiskScore(detections: AccountDetections): number {
+  let weightedSum = 0;
+  let totalWeight = 0;
+
+  for (const [key, detection] of presentDetections(detections)) {
+    const score = Math.max(0, Math.min(100, detection.score));
+    weightedSum += score * DETECTION_WEIGHTS[key];
+    totalWeight += DETECTION_WEIGHTS[key];
   }
 
-  // Ensure score is between 0 and 100
-  return Math.max(0, Math.min(100, weightedSum));
+  if (totalWeight === 0) return 0;
+
+  return Math.max(0, Math.min(100, weightedSum / totalWeight));
 }
 
 /**
  * Determine risk level from score
  */
 export function getRiskLevel(score: number): RiskLevel {
-  if (score >= RISK_THRESHOLDS.critical.min) {
+  if (score > RISK_THRESHOLDS.high.max) {
     return 'critical';
-  } else if (score >= RISK_THRESHOLDS.high.min) {
+  } else if (score > RISK_THRESHOLDS.medium.max) {
     return 'high';
-  } else if (score >= RISK_THRESHOLDS.medium.min) {
+  } else if (score > RISK_THRESHOLDS.low.max) {
     return 'medium';
   } else {
     return 'low';
@@ -91,41 +101,10 @@ export function getRiskColor(level: RiskLevel): string {
 /**
  * Generate flag reasons from detection results
  */
-export function generateFlagReasons(detections: {
-  accountAge: DetectionResult;
-  namePattern: DetectionResult;
-  emailPattern: DetectionResult;
-  singleRepo: DetectionResult;
-  coordinatedBehaviour: DetectionResult;
-  temporalClustering: DetectionResult;
-}): string[] {
-  const reasons: string[] = [];
-
-  if (detections.accountAge.detected && detections.accountAge.reason) {
-    reasons.push(`Age: ${detections.accountAge.reason}`);
-  }
-
-  if (detections.namePattern.detected && detections.namePattern.reason) {
-    reasons.push(`Name: ${detections.namePattern.reason}`);
-  }
-
-  if (detections.emailPattern.detected && detections.emailPattern.reason) {
-    reasons.push(`Email: ${detections.emailPattern.reason}`);
-  }
-
-  if (detections.singleRepo.detected && detections.singleRepo.reason) {
-    reasons.push(`Activity: ${detections.singleRepo.reason}`);
-  }
-
-  if (detections.coordinatedBehaviour.detected && detections.coordinatedBehaviour.reason) {
-    reasons.push(`Coordination: ${detections.coordinatedBehaviour.reason}`);
-  }
-
-  if (detections.temporalClustering.detected && detections.temporalClustering.reason) {
-    reasons.push(`Temporal: ${detections.temporalClustering.reason}`);
-  }
-
-  return reasons;
+export function generateFlagReasons(detections: AccountDetections): string[] {
+  return presentDetections(detections)
+    .filter(([, detection]) => detection.detected && detection.reason)
+    .map(([key, detection]) => `${FLAG_LABELS[key]}: ${detection.reason}`);
 }
 
 /**
@@ -134,14 +113,7 @@ export function generateFlagReasons(detections: {
 export function createAccountRiskAnalysis(
   accountId: string,
   username: string,
-  detections: {
-    accountAge: DetectionResult;
-    namePattern: DetectionResult;
-    emailPattern: DetectionResult;
-    singleRepo: DetectionResult;
-    coordinatedBehaviour: DetectionResult;
-    temporalClustering: DetectionResult;
-  }
+  detections: AccountDetections
 ): AccountRiskAnalysis {
   const riskScore = calculateRiskScore(detections);
   const flagReasons = generateFlagReasons(detections);

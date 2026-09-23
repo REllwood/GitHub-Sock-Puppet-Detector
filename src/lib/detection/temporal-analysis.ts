@@ -1,184 +1,118 @@
-import { DetectionResult } from '@/types/analysis';
+import type { DetectionResult } from '@/types/analysis';
+import type { RepositoryComment } from './coordinated-behaviour';
 
-interface CommentActivity {
-  username: string;
-  commentId: string;
-  createdAt: Date;
-  content: string;
+export interface TemporalCluster {
+  type: 'temporal';
+  accounts: string[];
+  thread: number | null;
+  timeWindow: { start: string; end: string };
+  score: number;
+}
+
+// Newcomers arriving on the same thread within this window form a burst
+const BURST_WINDOW_MS = 6 * 60 * 60 * 1000;
+const MIN_NEWCOMERS = 3;
+const TIGHT_BURST_MS = 60 * 60 * 1000;
+
+/**
+ * Score a burst of newcomers (0 - 100): more accounts and a tighter window score higher
+ */
+export function scoreBurst(newcomers: number, spreadMs: number): number {
+  if (newcomers < MIN_NEWCOMERS) return 0;
+
+  let score = Math.min(85, 50 + (newcomers - MIN_NEWCOMERS) * 10);
+  if (spreadMs <= TIGHT_BURST_MS) score += 15;
+
+  return Math.min(100, score);
 }
 
 /**
- * Detect temporal clustering - multiple accounts commenting within short time windows
+ * Detect bursts of accounts that show up in the repository for the first time on the
+ * same thread within a short window - the pattern of a brigade or sock puppet pile-on.
+ * Regular participants joining a discussion are not counted.
  */
-export function detectTemporalClustering(
-  comments: CommentActivity[],
-  timeWindowHours: number = 24
-): DetectionResult {
-  if (comments.length < 2) {
-    return {
-      detected: false,
-      score: 0,
-      reason: 'Insufficient comments for analysis',
-    };
-  }
-
-  // Sort comments by time
-  const sortedComments = [...comments].sort(
-    (a, b) => a.createdAt.getTime() - b.createdAt.getTime()
-  );
-
-  const timeWindowMs = timeWindowHours * 60 * 60 * 1000;
-  const clusters: Array<{
-    startTime: Date;
-    endTime: Date;
-    accounts: Set<string>;
-    comments: CommentActivity[];
-  }> = [];
-
-  // Sliding window to detect clusters
-  for (let i = 0; i < sortedComments.length; i++) {
-    const windowStart = sortedComments[i].createdAt;
-    const windowEnd = new Date(windowStart.getTime() + timeWindowMs);
-
-    const windowComments = sortedComments.filter(
-      c => c.createdAt >= windowStart && c.createdAt <= windowEnd
-    );
-
-    const uniqueAccounts = new Set(windowComments.map(c => c.username));
-
-    if (uniqueAccounts.size >= 2) {
-      // Check if this cluster overlaps with existing ones
-      const overlapping = clusters.find(
-        cluster =>
-          windowStart >= cluster.startTime &&
-          windowStart <= new Date(cluster.endTime.getTime() + timeWindowMs)
-      );
-
-      if (!overlapping) {
-        clusters.push({
-          startTime: windowStart,
-          endTime: windowEnd,
-          accounts: uniqueAccounts,
-          comments: windowComments,
-        });
-      }
+export function analyseNewcomerBursts(comments: RepositoryComment[]): {
+  byAccount: Map<string, DetectionResult>;
+  clusters: TemporalCluster[];
+} {
+  // Each account's first comment in the repository
+  const firstComments = new Map<string, RepositoryComment>();
+  for (const comment of comments) {
+    const current = firstComments.get(comment.username);
+    if (!current || comment.createdAt < current.createdAt) {
+      firstComments.set(comment.username, comment);
     }
   }
 
-  if (clusters.length === 0) {
-    return {
-      detected: false,
-      score: 0,
-      details: { clusters: [] },
-    };
-  }
-
-  // Calculate score based on cluster characteristics
-  let maxScore = 0;
-  clusters.forEach(cluster => {
-    const accountCount = cluster.accounts.size;
-    const commentCount = cluster.comments.length;
-
-    // More accounts and more comments = higher score
-    let clusterScore = Math.min(100, 30 + accountCount * 15 + commentCount * 5);
-
-    // Boost score if comments are very close together (< 1 hour)
-    const timeSpanHours =
-      (cluster.endTime.getTime() - cluster.startTime.getTime()) / (1000 * 60 * 60);
-
-    if (timeSpanHours < 1 && accountCount >= 3) {
-      clusterScore = Math.min(100, clusterScore + 30);
-    }
-
-    maxScore = Math.max(maxScore, clusterScore);
+  // Group arrivals by thread
+  const arrivalsByThread = new Map<number | null, RepositoryComment[]>();
+  firstComments.forEach(comment => {
+    const list = arrivalsByThread.get(comment.thread) ?? [];
+    list.push(comment);
+    arrivalsByThread.set(comment.thread, list);
   });
 
-  return {
-    detected: maxScore > 40,
-    score: maxScore,
-    reason: `Detected ${clusters.length} temporal cluster(s)`,
-    details: {
-      clusterCount: clusters.length,
-      clusters: clusters.map(c => ({
-        startTime: c.startTime.toISOString(),
-        endTime: c.endTime.toISOString(),
-        accountCount: c.accounts.size,
-        accounts: Array.from(c.accounts),
-        commentCount: c.comments.length,
-      })),
-      timeWindowHours,
-    },
-  };
-}
+  const clusters: TemporalCluster[] = [];
 
-/**
- * Detect if accounts always comment together (coordination pattern)
- */
-export function detectAlwaysTogetherPattern(
-  accountComments: Map<string, CommentActivity[]>
-): {
-  pairs: Array<{
-    account1: string;
-    account2: string;
-    coOccurrenceRate: number;
-    score: number;
-  }>;
-  overallScore: number;
-} {
-  const accounts = Array.from(accountComments.keys());
-  const pairs: Array<{
-    account1: string;
-    account2: string;
-    coOccurrenceRate: number;
-    score: number;
-  }> = [];
+  arrivalsByThread.forEach((arrivals, thread) => {
+    const sorted = arrivals.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 
-  // Check each pair of accounts
-  for (let i = 0; i < accounts.length; i++) {
-    for (let j = i + 1; j < accounts.length; j++) {
-      const account1 = accounts[i];
-      const account2 = accounts[j];
+    let start = 0;
+    while (start < sorted.length) {
+      let end = start;
+      while (
+        end + 1 < sorted.length &&
+        sorted[end + 1].createdAt.getTime() - sorted[start].createdAt.getTime() <= BURST_WINDOW_MS
+      ) {
+        end++;
+      }
 
-      const comments1 = accountComments.get(account1)!;
-      const comments2 = accountComments.get(account2)!;
-
-      // Count how often they comment within 24 hours of each other
-      let coOccurrences = 0;
-      const timeWindow = 24 * 60 * 60 * 1000; // 24 hours
-
-      comments1.forEach(c1 => {
-        const hasCloseComment = comments2.some(c2 => {
-          const timeDiff = Math.abs(c1.createdAt.getTime() - c2.createdAt.getTime());
-          return timeDiff <= timeWindow;
+      const burst = sorted.slice(start, end + 1);
+      if (burst.length >= MIN_NEWCOMERS) {
+        const first = burst[0].createdAt;
+        const last = burst[burst.length - 1].createdAt;
+        clusters.push({
+          type: 'temporal',
+          accounts: burst.map(comment => comment.username),
+          thread,
+          timeWindow: { start: first.toISOString(), end: last.toISOString() },
+          score: scoreBurst(burst.length, last.getTime() - first.getTime()),
         });
-
-        if (hasCloseComment) {
-          coOccurrences++;
-        }
-      });
-
-      const totalComments = Math.min(comments1.length, comments2.length);
-      if (totalComments === 0) continue;
-
-      const coOccurrenceRate = coOccurrences / totalComments;
-
-      if (coOccurrenceRate >= 0.5) {
-        // They comment together at least 50% of the time
-        const score = Math.min(100, 50 + coOccurrenceRate * 50);
-        pairs.push({
-          account1,
-          account2,
-          coOccurrenceRate,
-          score,
-        });
+        start = end + 1;
+      } else {
+        start++;
       }
     }
-  }
+  });
 
-  const overallScore = pairs.length > 0 ? Math.max(...pairs.map(p => p.score)) : 0;
+  clusters.sort((a, b) => b.score - a.score);
 
-  return {
-    pairs: pairs.sort((a, b) => b.score - a.score),
-    overallScore,
-  };
+  const byAccount = new Map<string, DetectionResult>();
+  firstComments.forEach((_comment, username) => {
+    const cluster = clusters.find(c => c.accounts.includes(username));
+
+    if (!cluster) {
+      byAccount.set(username, { detected: false, score: 0 });
+      return;
+    }
+
+    const where = cluster.thread === null ? 'the repository' : `#${cluster.thread}`;
+    const spreadMinutes = Math.round(
+      (new Date(cluster.timeWindow.end).getTime() - new Date(cluster.timeWindow.start).getTime()) /
+        60000
+    );
+
+    byAccount.set(username, {
+      detected: true,
+      score: cluster.score,
+      reason: `First appeared in ${where} alongside ${cluster.accounts.length - 1} other new account(s) within ${spreadMinutes} minutes`,
+      details: {
+        thread: cluster.thread,
+        accounts: cluster.accounts,
+        timeWindow: cluster.timeWindow,
+      },
+    });
+  });
+
+  return { byAccount, clusters };
 }
