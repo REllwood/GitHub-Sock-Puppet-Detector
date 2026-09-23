@@ -3,13 +3,29 @@ import { DetectionResult } from '@/types/analysis';
 const DEFAULT_AGE_THRESHOLD_DAYS = 90;
 
 /**
+ * Age of a GitHub account in whole days, or null if the creation date isn't known yet
+ */
+export function getAccountAgeInDays(accountCreatedAt: Date | null, now: Date = new Date()) {
+  if (!accountCreatedAt) return null;
+  return Math.floor((now.getTime() - accountCreatedAt.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+/**
  * Detect accounts based on their age
  * Newer accounts receive higher suspicion scores
  */
 export function detectAccountAge(
-  accountCreatedAt: Date,
+  accountCreatedAt: Date | null,
   thresholdDays: number = DEFAULT_AGE_THRESHOLD_DAYS
 ): DetectionResult {
+  if (!accountCreatedAt) {
+    return {
+      detected: false,
+      score: 0,
+      reason: 'Account creation date not yet known',
+    };
+  }
+
   const now = new Date();
   const ageInDays = Math.floor(
     (now.getTime() - accountCreatedAt.getTime()) / (1000 * 60 * 60 * 24)
@@ -57,7 +73,7 @@ export function detectAccountAge(
  * Batch analyze account ages
  */
 export function detectAccountAgesBatch(
-  accounts: Array<{ createdAt: Date }>,
+  accounts: Array<{ createdAt: Date | null }>,
   thresholdDays?: number
 ): Map<number, DetectionResult> {
   const results = new Map<number, DetectionResult>();
