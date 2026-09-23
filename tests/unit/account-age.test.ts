@@ -1,4 +1,4 @@
-import { detectAccountAge } from '@/lib/detection/account-age';
+import { detectAccountAge, getAccountAgeInDays } from '@/lib/detection/account-age';
 
 describe('Account Age Detection', () => {
   it('should detect very new accounts (< 7 days)', () => {
@@ -29,5 +29,19 @@ describe('Account Age Detection', () => {
 
     expect(result.detected).toBe(false);
     expect(result.score).toBe(0);
+  });
+
+  it('does not flag accounts whose creation date is not yet known', () => {
+    const result = detectAccountAge(null);
+
+    expect(result.detected).toBe(false);
+    expect(result.score).toBe(0);
+  });
+
+  it('calculates account age in days', () => {
+    const now = new Date('2026-09-23T00:00:00Z');
+
+    expect(getAccountAgeInDays(new Date('2026-09-13T00:00:00Z'), now)).toBe(10);
+    expect(getAccountAgeInDays(null, now)).toBeNull();
   });
 });

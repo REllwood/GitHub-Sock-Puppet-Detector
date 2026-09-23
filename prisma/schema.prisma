@@ -12,11 +12,12 @@ datasource db {
 
 model Repository {
   id             String     @id @default(cuid())
-  githubId       Int        @unique
+  githubId       BigInt     @unique
   fullName       String     @unique // "owner/repo"
   installationId Int
   analyses       Analysis[]
   alerts         Alert[]
+  comments       Comment[]
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
 
@@ -28,8 +29,10 @@ model Account {
   githubId        Int               @unique
   username        String            @unique
   email           String?
-  createdAt       DateTime
+  accountType     String            @default("User") // "User" | "Organization" | "Bot"
+  createdAt       DateTime?         // GitHub account creation date, set when the profile is synced
   profileData     Json              // Full GitHub profile
+  profileSyncedAt DateTime?
   riskScore       Float             @default(0)
   flagReasons     String[]          // Array of detection reasons
   comments        Comment[]
@@ -43,16 +46,19 @@ model Account {
 
 model Comment {
   id           String     @id @default(cuid())
-  githubId     Int        @unique
+  githubId     BigInt
+  kind         String     // "issue_comment" | "review_comment"
   accountId    String
   account      Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  repositoryId String?
+  repositoryId String
+  repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
   content      String     @db.Text
   createdAt    DateTime
   issueNumber  Int?
   prNumber     Int?
   updatedAt    DateTime   @updatedAt
 
+  @@unique([kind, githubId])
   @@index([accountId])
   @@index([repositoryId])
   @@index([createdAt])

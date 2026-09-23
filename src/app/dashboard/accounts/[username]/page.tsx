@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getRiskLevel } from '@/lib/detection/risk-scorer';
+import { getAccountAgeInDays } from '@/lib/detection/account-age';
 import RiskBadge from '@/components/ui/RiskBadge';
 
 export const dynamic = 'force-dynamic';
@@ -29,11 +30,7 @@ async function getAccount(username: string) {
   });
 }
 
-export default async function AccountDetailPage({
-  params,
-}: {
-  params: { username: string };
-}) {
+export default async function AccountDetailPage({ params }: { params: { username: string } }) {
   const account = await getAccount(params.username);
 
   if (!account) {
@@ -41,9 +38,7 @@ export default async function AccountDetailPage({
   }
 
   const riskLevel = getRiskLevel(account.riskScore);
-  const accountAge = Math.floor(
-    (Date.now() - new Date(account.createdAt).getTime()) / (1000 * 60 * 60 * 24)
-  );
+  const accountAge = getAccountAgeInDays(account.createdAt);
 
   return (
     <div>
@@ -59,7 +54,7 @@ export default async function AccountDetailPage({
           <RiskBadge level={riskLevel} score={account.riskScore} />
         </div>
         <div className="flex items-center gap-6 text-sm text-gray-600 dark:text-gray-400">
-          <span>Account age: {accountAge} days</span>
+          <span>Account age: {accountAge === null ? 'Unknown' : `${accountAge} days`}</span>
           <span>Comments: {account.comments.length}</span>
           {account.email && <span>Email: {account.email}</span>}
         </div>
@@ -114,9 +109,7 @@ export default async function AccountDetailPage({
                   className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg"
                 >
                   <div>
-                    <div className="font-medium text-sm">
-                      {result.analysis.repository.fullName}
-                    </div>
+                    <div className="font-medium text-sm">{result.analysis.repository.fullName}</div>
                     <div className="text-xs text-gray-600 dark:text-gray-400">
                       {new Date(result.createdAt).toLocaleString()}
                     </div>

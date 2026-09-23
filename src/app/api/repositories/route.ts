@@ -1,5 +1,5 @@
-import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { jsonResponse } from '@/lib/http';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,9 +17,9 @@ export async function GET() {
       orderBy: { createdAt: 'desc' },
     });
 
-    return NextResponse.json({ repositories });
+    return jsonResponse({ repositories });
   } catch (error) {
     console.error('Failed to get repositories:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return jsonResponse({ error: 'Internal server error' }, { status: 500 });
   }
 }

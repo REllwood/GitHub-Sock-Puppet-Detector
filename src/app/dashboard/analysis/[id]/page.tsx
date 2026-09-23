@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getRiskLevel } from '@/lib/detection/risk-scorer';
+import { getAccountAgeInDays } from '@/lib/detection/account-age';
 import RiskBadge from '@/components/ui/RiskBadge';
 
 export const dynamic = 'force-dynamic';
@@ -106,10 +107,7 @@ export default async function AnalysisDetailPage({ params }: { params: { id: str
             <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
               {analysis.accountResults.map(result => {
                 const level = getRiskLevel(result.riskScore);
-                const accountAge = Math.floor(
-                  (Date.now() - new Date(result.account.createdAt).getTime()) /
-                    (1000 * 60 * 60 * 24)
-                );
+                const accountAge = getAccountAgeInDays(result.account.createdAt);
 
                 return (
                   <tr key={result.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
@@ -137,7 +135,7 @@ export default async function AnalysisDetailPage({ params }: { params: { id: str
                       {result.riskScore.toFixed(1)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                      {accountAge} days
+                      {accountAge === null ? 'Unknown' : `${accountAge} days`}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       <Link

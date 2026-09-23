@@ -24,16 +24,18 @@ async function processCommentAnalysis(job: Job<AnalyzeCommentJob>) {
     // Create GitHub client
     const githubClient = await createGitHubClient(installationId);
 
-    // Fetch latest user data from GitHub
+    // Fetch the full profile: webhook payloads don't include the creation date or email
     const userData = await githubClient.getUser(account.username);
 
     // Update account profile data
     await prisma.account.update({
       where: { id: accountId },
       data: {
-        profileData: userData,
+        profileData: JSON.parse(JSON.stringify(userData)),
         email: userData.email || account.email,
-        lastAnalysedAt: new Date(),
+        accountType: userData.type,
+        createdAt: new Date(userData.created_at),
+        profileSyncedAt: new Date(),
       },
     });
 

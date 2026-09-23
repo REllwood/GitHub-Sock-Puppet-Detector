@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
+import { jsonResponse } from '@/lib/http';
 import { queueRepositoryAnalysis } from '@/lib/queue/setup';
 
 export async function POST(
@@ -16,7 +17,7 @@ export async function POST(
     });
 
     if (!repository) {
-      return NextResponse.json(
+      return jsonResponse(
         { error: 'Repository not found. Please install the GitHub App first.' },
         { status: 404 }
       );
@@ -31,7 +32,7 @@ export async function POST(
     });
 
     if (existingAnalysis) {
-      return NextResponse.json(
+      return jsonResponse(
         {
           message: 'Analysis already in progress',
           analysisId: existingAnalysis.id,
@@ -47,13 +48,13 @@ export async function POST(
       triggeredBy: 'manual',
     });
 
-    return NextResponse.json({
+    return jsonResponse({
       message: 'Analysis queued successfully',
       repository: fullName,
     });
   } catch (error) {
     console.error('Failed to queue analysis:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return jsonResponse({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
@@ -83,10 +84,10 @@ export async function GET(
     });
 
     if (!repository) {
-      return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
+      return jsonResponse({ error: 'Repository not found' }, { status: 404 });
     }
 
-    return NextResponse.json({
+    return jsonResponse({
       repository: {
         id: repository.id,
         fullName: repository.fullName,
@@ -96,6 +97,6 @@ export async function GET(
     });
   } catch (error) {
     console.error('Failed to get repository analyses:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return jsonResponse({ error: 'Internal server error' }, { status: 500 });
   }
 }
