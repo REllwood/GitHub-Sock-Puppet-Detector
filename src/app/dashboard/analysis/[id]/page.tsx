@@ -4,12 +4,14 @@ import { prisma } from '@/lib/db';
 import { getRiskLevel } from '@/lib/detection/risk-scorer';
 import { getAccountAgeInDays } from '@/lib/detection/account-age';
 import RiskBadge from '@/components/ui/RiskBadge';
+import type { Prisma } from '@prisma/client';
+import { requireViewer } from '@/lib/viewer';
 
 export const dynamic = 'force-dynamic';
 
-async function getAnalysis(id: string) {
-  return await prisma.analysis.findUnique({
-    where: { id },
+async function getAnalysis(id: string, repositoryFilter: Prisma.RepositoryWhereInput) {
+  return await prisma.analysis.findFirst({
+    where: { id, repository: repositoryFilter },
     include: {
       repository: true,
       accountResults: {
@@ -25,7 +27,8 @@ async function getAnalysis(id: string) {
 }
 
 export default async function AnalysisDetailPage({ params }: { params: { id: string } }) {
-  const analysis = await getAnalysis(params.id);
+  const { repositoryFilter } = await requireViewer(`/dashboard/analysis/${params.id}`);
+  const analysis = await getAnalysis(params.id, repositoryFilter);
 
   if (!analysis) {
     notFound();

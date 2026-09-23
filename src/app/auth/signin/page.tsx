@@ -12,9 +12,19 @@ export default function SignIn() {
   );
 }
 
+const ERROR_MESSAGES: Record<string, string> = {
+  SessionExpired: 'Your GitHub session has expired. Please sign in again.',
+  OAuthCallback: 'GitHub sign-in failed. Please try again.',
+  AccessDenied: 'Access was denied.',
+};
+
 function SignInCard() {
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
+  const requested = searchParams.get('callbackUrl') || '/dashboard';
+  // Only allow redirects back into this app
+  const callbackUrl =
+    requested.startsWith('/') && !requested.startsWith('//') ? requested : '/dashboard';
+  const error = searchParams.get('error');
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
@@ -25,6 +35,12 @@ function SignInCard() {
             Access the GitHub Sock Puppet Detector dashboard
           </p>
         </div>
+
+        {error && (
+          <p className="mb-6 rounded-lg bg-red-50 dark:bg-red-900/20 p-3 text-sm text-red-700 dark:text-red-300">
+            {ERROR_MESSAGES[error] ?? 'Sign-in failed. Please try again.'}
+          </p>
+        )}
 
         <button
           onClick={() => signIn('github', { callbackUrl })}

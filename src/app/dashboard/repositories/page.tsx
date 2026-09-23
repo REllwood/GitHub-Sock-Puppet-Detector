@@ -1,10 +1,13 @@
 import Link from 'next/link';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
+import { requireViewer } from '@/lib/viewer';
 
 export const dynamic = 'force-dynamic';
 
-async function getRepositories() {
+async function getRepositories(repositoryFilter: Prisma.RepositoryWhereInput) {
   return await prisma.repository.findMany({
+    where: repositoryFilter,
     include: {
       analyses: {
         orderBy: { createdAt: 'desc' },
@@ -25,7 +28,8 @@ async function getRepositories() {
 }
 
 export default async function RepositoriesPage() {
-  const repositories = await getRepositories();
+  const { repositoryFilter } = await requireViewer('/dashboard/repositories');
+  const repositories = await getRepositories(repositoryFilter);
 
   return (
     <div>

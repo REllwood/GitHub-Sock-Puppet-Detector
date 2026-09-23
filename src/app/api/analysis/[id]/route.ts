@@ -1,11 +1,15 @@
-import { NextRequest } from 'next/server';
+import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { jsonResponse } from '@/lib/http';
+import { authoriseApiRequest, isErrorResponse } from '@/lib/api-auth';
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const analysis = await prisma.analysis.findUnique({
-      where: { id: params.id },
+    const auth = await authoriseApiRequest(req);
+    if (isErrorResponse(auth)) return auth;
+
+    const analysis = await prisma.analysis.findFirst({
+      where: { id: params.id, repository: auth.repositoryFilter },
       include: {
         repository: true,
         accountResults: {

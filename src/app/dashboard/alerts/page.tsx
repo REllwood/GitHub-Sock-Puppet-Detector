@@ -1,11 +1,13 @@
 import Link from 'next/link';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
+import { requireViewer } from '@/lib/viewer';
 
 export const dynamic = 'force-dynamic';
 
-async function getAlerts() {
+async function getAlerts(repositoryFilter: Prisma.RepositoryWhereInput) {
   return await prisma.alert.findMany({
-    where: { dismissed: false },
+    where: { dismissed: false, repository: repositoryFilter },
     include: {
       repository: true,
     },
@@ -14,7 +16,8 @@ async function getAlerts() {
 }
 
 export default async function AlertsPage() {
-  const alerts = await getAlerts();
+  const { repositoryFilter } = await requireViewer('/dashboard/alerts');
+  const alerts = await getAlerts(repositoryFilter);
 
   const severityColors = {
     critical: 'border-red-500 bg-red-50 dark:bg-red-900/20',
@@ -77,9 +80,7 @@ export default async function AlertsPage() {
                 </div>
               </div>
 
-              <p className="text-sm text-gray-700 dark:text-gray-300 mb-4">
-                {alert.description}
-              </p>
+              <p className="text-sm text-gray-700 dark:text-gray-300 mb-4">{alert.description}</p>
 
               {alert.accountsInvolved.length > 0 && (
                 <div className="mb-4">

@@ -4,34 +4,42 @@ import { prisma } from '@/lib/db';
 import { getRiskLevel } from '@/lib/detection/risk-scorer';
 import { getAccountAgeInDays } from '@/lib/detection/account-age';
 import RiskBadge from '@/components/ui/RiskBadge';
+import type { Prisma } from '@prisma/client';
+import { getScopedAccountRisk } from '@/lib/risk-summary';
+import { requireViewer } from '@/lib/viewer';
 
 export const dynamic = 'force-dynamic';
 
-async function getAccount(username: string) {
-  return await prisma.account.findUnique({
-    where: { username },
+async function getAccount(username: string, repositoryFilter: Prisma.RepositoryWhereInput) {
+  // Only accounts that have commented in a repository the viewer can access
+  const account = await prisma.account.findFirst({
+    where: {
+      username,
+      comments: { some: { repository: repositoryFilter } },
+    },
     include: {
       comments: {
+        where: { repository: repositoryFilter },
         orderBy: { createdAt: 'desc' },
         take: 50,
       },
-      analyses: {
-        include: {
-          analysis: {
-            include: {
-              repository: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 10,
-      },
     },
   });
+
+  if (!account) return null;
+
+  const risk = await getScopedAccountRisk(account.id, repositoryFilter);
+  return {
+    ...account,
+    riskScore: risk.riskScore,
+    flagReasons: risk.flagReasons,
+    analyses: risk.history.slice(0, 10),
+  };
 }
 
 export default async function AccountDetailPage({ params }: { params: { username: string } }) {
-  const account = await getAccount(params.username);
+  const { repositoryFilter } = await requireViewer(`/dashboard/accounts/${params.username}`);
+  const account = await getAccount(params.username, repositoryFilter);
 
   if (!account) {
     notFound();
