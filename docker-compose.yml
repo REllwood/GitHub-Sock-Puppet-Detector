@@ -78,12 +78,12 @@ services:
       retries: 3
       start_period: 40s
 
+  # Scale with: docker compose up -d --scale worker=3
   worker:
     build:
       context: .
       dockerfile: Dockerfile
       target: worker
-    container_name: sockpuppet-worker
     depends_on:
       migrate:
         condition: service_completed_successfully
