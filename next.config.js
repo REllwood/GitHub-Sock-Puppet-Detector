@@ -3,10 +3,10 @@ const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
   images: {
-    domains: ['avatars.githubusercontent.com'],
+    remotePatterns: [{ protocol: 'https', hostname: 'avatars.githubusercontent.com' }],
   },
   experimental: {
-    serverComponentsExternalPackages: ['@prisma/client', 'bcrypt'],
+    serverComponentsExternalPackages: ['@prisma/client', 'bullmq', 'ioredis'],
   },
 };
 

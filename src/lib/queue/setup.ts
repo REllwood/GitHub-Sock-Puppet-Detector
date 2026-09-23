@@ -1,12 +1,5 @@
-import { Queue, QueueEvents } from 'bullmq';
-
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-
-// Connection configuration
-const connection = {
-  host: 'localhost',
-  port: 6379,
-};
+import { Queue, type DefaultJobOptions } from 'bullmq';
+import { getRedisConnectionOptions } from './connection';
 
 // Job types
 export interface AnalyzeCommentJob {
@@ -28,27 +21,45 @@ export const QUEUE_NAMES = {
   ANALYZE_REPOSITORY: 'analyze-repository',
 } as const;
 
-// Create queues
-export const commentAnalysisQueue = new Queue<AnalyzeCommentJob>(QUEUE_NAMES.ANALYZE_COMMENT, connection);
+const defaultJobOptions: DefaultJobOptions = {
+  attempts: 3,
+  backoff: { type: 'exponential', delay: 5000 },
+  removeOnComplete: { count: 1000 },
+  removeOnFail: { count: 5000 },
+};
 
-export const repositoryAnalysisQueue = new Queue<AnalyzeRepositoryJob>(
-  QUEUE_NAMES.ANALYZE_REPOSITORY,
-  connection
-);
+// Queues are created lazily so that importing this module never opens a Redis connection,
+// and cached on globalThis so Next.js hot reloads don't leak connections.
+const globalForQueues = globalThis as unknown as {
+  commentAnalysisQueue?: Queue<AnalyzeCommentJob>;
+  repositoryAnalysisQueue?: Queue<AnalyzeRepositoryJob>;
+};
 
-// Queue events for monitoring
-export const commentQueueEvents = new QueueEvents(QUEUE_NAMES.ANALYZE_COMMENT, connection);
-export const repositoryQueueEvents = new QueueEvents(QUEUE_NAMES.ANALYZE_REPOSITORY, connection);
+export function getCommentAnalysisQueue(): Queue<AnalyzeCommentJob> {
+  globalForQueues.commentAnalysisQueue ??= new Queue<AnalyzeCommentJob>(
+    QUEUE_NAMES.ANALYZE_COMMENT,
+    { connection: getRedisConnectionOptions(), defaultJobOptions }
+  );
+  return globalForQueues.commentAnalysisQueue;
+}
+
+export function getRepositoryAnalysisQueue(): Queue<AnalyzeRepositoryJob> {
+  globalForQueues.repositoryAnalysisQueue ??= new Queue<AnalyzeRepositoryJob>(
+    QUEUE_NAMES.ANALYZE_REPOSITORY,
+    { connection: getRedisConnectionOptions(), defaultJobOptions }
+  );
+  return globalForQueues.repositoryAnalysisQueue;
+}
 
 // Helper functions
 export async function queueCommentAnalysis(data: AnalyzeCommentJob) {
-  const job = await commentAnalysisQueue.add('analyze-comment', data);
+  const job = await getCommentAnalysisQueue().add(QUEUE_NAMES.ANALYZE_COMMENT, data);
   console.log(`Queued comment analysis job: ${job.id}`);
   return job;
 }
 
 export async function queueRepositoryAnalysis(data: AnalyzeRepositoryJob) {
-  const job = await repositoryAnalysisQueue.add('analyze-repository', data);
+  const job = await getRepositoryAnalysisQueue().add(QUEUE_NAMES.ANALYZE_REPOSITORY, data);
   console.log(`Queued repository analysis job: ${job.id}`);
   return job;
 }
@@ -56,8 +67,8 @@ export async function queueRepositoryAnalysis(data: AnalyzeRepositoryJob) {
 // Get queue statistics
 export async function getQueueStats() {
   const [commentCounts, repoCounts] = await Promise.all([
-    commentAnalysisQueue.getJobCounts(),
-    repositoryAnalysisQueue.getJobCounts(),
+    getCommentAnalysisQueue().getJobCounts(),
+    getRepositoryAnalysisQueue().getJobCounts(),
   ]);
 
   return {
@@ -69,25 +80,10 @@ export async function getQueueStats() {
 // Graceful shutdown
 export async function closeQueues() {
   await Promise.all([
-    commentAnalysisQueue.close(),
-    repositoryAnalysisQueue.close(),
-    commentQueueEvents.close(),
-    repositoryQueueEvents.close(),
+    globalForQueues.commentAnalysisQueue?.close(),
+    globalForQueues.repositoryAnalysisQueue?.close(),
   ]);
+  globalForQueues.commentAnalysisQueue = undefined;
+  globalForQueues.repositoryAnalysisQueue = undefined;
   console.log('Queues closed');
-}
-
-// Handle process termination
-if (typeof process !== 'undefined') {
-  process.on('SIGTERM', async () => {
-    console.log('SIGTERM received, closing queues...');
-    await closeQueues();
-    process.exit(0);
-  });
-
-  process.on('SIGINT', async () => {
-    console.log('SIGINT received, closing queues...');
-    await closeQueues();
-    process.exit(0);
-  });
 }

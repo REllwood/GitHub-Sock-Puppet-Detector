@@ -161,7 +161,7 @@ npm run dev
 In a separate terminal, start the worker process:
 
 ```bash
-node -r ts-node/register src/lib/queue/workers.ts
+npm run worker:dev
 ```
 
 The application will be available at `http://localhost:3000`.

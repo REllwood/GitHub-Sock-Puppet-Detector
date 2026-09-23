@@ -1,38 +1,52 @@
 FROM node:20-alpine AS base
+RUN apk add --no-cache libc6-compat openssl
 
 # Install dependencies only when needed
 FROM base AS deps
-RUN apk add --no-cache libc6-compat openssl
 WORKDIR /app
 
-# Install dependencies
-COPY package.json package-lock.json* ./
+# The Prisma schema is needed by the postinstall `prisma generate` step
+COPY package.json package-lock.json ./
+COPY prisma ./prisma
 RUN npm ci
 
-# Rebuild the source code only when needed
+# Build the Next.js app and the worker bundle
 FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Generate Prisma Client
-RUN npx prisma generate
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npx prisma generate && npm run build
 
-# Build Next.js
-ENV NEXT_TELEMETRY_DISABLED 1
-RUN npm run build
+# One-off database migrations (has the Prisma CLI available)
+FROM builder AS migrate
+CMD ["npx", "prisma", "migrate", "deploy"]
 
-# Production image, copy all the files and run next
+# Background job worker
+FROM base AS worker
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/dist ./dist
+
+USER node
+
+CMD ["node", "--enable-source-maps", "dist/worker.mjs"]
+
+# Production web server
 FROM base AS runner
 WORKDIR /app
 
-ENV NODE_ENV production
-ENV NEXT_TELEMETRY_DISABLED 1
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
-
-COPY --from=builder /app/public ./public
 
 # Set the correct permission for prerender cache
 RUN mkdir .next
@@ -47,7 +61,7 @@ USER nextjs
 
 EXPOSE 3000
 
-ENV PORT 3000
-ENV HOSTNAME "0.0.0.0"
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
 
 CMD ["node", "server.js"]
