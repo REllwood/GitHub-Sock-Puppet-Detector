@@ -1,9 +1,15 @@
 import type { WebhookEventDefinition } from '@octokit/webhooks/types';
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { queueCommentAnalysis } from '@/lib/queue/setup';
-
-export type CommentKind = 'issue_comment' | 'review_comment';
+import {
+  storeComment,
+  upsertAccount,
+  upsertRepository,
+  withUniqueRetry,
+  type CommentKind,
+  type GitHubUserRef,
+} from './store';
 
 export type IssueCommentEvent =
   | WebhookEventDefinition<'issue-comment-created'>
@@ -31,17 +37,6 @@ export interface WebhookResult {
   reason?: string;
 }
 
-interface WebhookUser {
-  id: number;
-  login: string;
-  type?: string;
-}
-
-interface WebhookRepository {
-  id: number;
-  full_name: string;
-}
-
 interface CommentEventInput {
   kind: CommentKind;
   action: string;
@@ -49,91 +44,12 @@ interface CommentEventInput {
     id: number;
     body: string | null;
     created_at: string;
-    user: WebhookUser | null;
+    user: GitHubUserRef | null;
   };
-  repository: WebhookRepository;
+  repository: { id: number; full_name: string };
   installationId?: number;
   issueNumber?: number;
   prNumber?: number;
-}
-
-function isUniqueConstraintError(error: unknown): boolean {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
-}
-
-/**
- * Run an upsert, retrying once if a concurrent request created the same row first.
- */
-async function withUniqueRetry<T>(operation: () => Promise<T>): Promise<T> {
-  try {
-    return await operation();
-  } catch (error) {
-    if (isUniqueConstraintError(error)) {
-      return operation();
-    }
-    throw error;
-  }
-}
-
-/**
- * Create or update a repository. If another repository record still holds this name
- * (e.g. after a rename or transfer), its stale name is released first.
- */
-export async function upsertRepository(repository: WebhookRepository, installationId: number) {
-  const githubId = BigInt(repository.id);
-
-  await prisma.repository.updateMany({
-    where: { fullName: repository.full_name, NOT: { githubId } },
-    data: { fullName: `${repository.full_name}#stale-${repository.id}` },
-  });
-
-  return withUniqueRetry(() =>
-    prisma.repository.upsert({
-      where: { githubId },
-      create: {
-        githubId,
-        fullName: repository.full_name,
-        installationId,
-      },
-      update: {
-        fullName: repository.full_name,
-        installationId,
-      },
-    })
-  );
-}
-
-/**
- * Create or update an account from a webhook user. Webhook payloads only carry a minimal
- * user object (no creation date or email); the full profile is synced by the worker.
- */
-export async function upsertAccount(user: WebhookUser) {
-  const staleAccount = await prisma.account.findFirst({
-    where: { username: user.login, NOT: { githubId: user.id } },
-  });
-
-  if (staleAccount) {
-    await prisma.account.update({
-      where: { id: staleAccount.id },
-      data: { username: `${staleAccount.username}#stale-${staleAccount.githubId}` },
-    });
-  }
-
-  return withUniqueRetry(() =>
-    prisma.account.upsert({
-      where: { githubId: user.id },
-      create: {
-        githubId: user.id,
-        username: user.login,
-        accountType: user.type ?? 'User',
-        profileData: JSON.parse(JSON.stringify(user)),
-      },
-      update: {
-        username: user.login,
-        accountType: user.type ?? 'User',
-      },
-    })
-  );
 }
 
 async function handleCommentEvent(input: CommentEventInput): Promise<WebhookResult> {
@@ -172,25 +88,16 @@ async function handleCommentEvent(input: CommentEventInput): Promise<WebhookResu
 
   const repo = await upsertRepository(repository, installationId);
   const account = await upsertAccount(comment.user);
-
-  const stored = await withUniqueRetry(() =>
-    prisma.comment.upsert({
-      where: { kind_githubId: { kind, githubId } },
-      create: {
-        githubId,
-        kind,
-        accountId: account.id,
-        repositoryId: repo.id,
-        content: comment.body ?? '',
-        createdAt: new Date(comment.created_at),
-        issueNumber: input.issueNumber,
-        prNumber: input.prNumber,
-      },
-      update: {
-        content: comment.body ?? '',
-      },
-    })
-  );
+  const stored = await storeComment({
+    kind,
+    githubId: comment.id,
+    accountId: account.id,
+    repositoryId: repo.id,
+    body: comment.body,
+    createdAt: comment.created_at,
+    issueNumber: input.issueNumber,
+    prNumber: input.prNumber,
+  });
 
   await queueCommentAnalysis({
     commentId: stored.id,

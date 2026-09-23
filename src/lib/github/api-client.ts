@@ -1,141 +1,132 @@
-import { Octokit } from '@octokit/rest';
+import type { Octokit } from '@octokit/rest';
 import { getInstallationOctokit } from './app-auth';
 
+export interface RepositoryComment {
+  kind: 'issue_comment' | 'review_comment';
+  id: number;
+  body: string;
+  createdAt: string;
+  user: { id: number; login: string; type?: string } | null;
+  issueNumber?: number;
+  prNumber?: number;
+}
+
+export interface UserEvent {
+  type: string | null;
+  repo: { name: string };
+  created_at: string | null;
+}
+
 /**
- * GitHub API client wrapper with rate limiting and error handling
+ * Extract the trailing issue / pull request number from an API URL
+ */
+function numberFromUrl(url: string | undefined): number | undefined {
+  const match = url?.match(/\/(\d+)$/);
+  return match ? Number(match[1]) : undefined;
+}
+
+/**
+ * GitHub API client wrapper for a single app installation
  */
 export class GitHubAPIClient {
-  private octokit!: Octokit;
+  private octokit?: Octokit;
   private installationId: number;
 
   constructor(installationId: number, octokit?: Octokit) {
     this.installationId = installationId;
-    if (octokit) {
-      this.octokit = octokit;
-    }
+    this.octokit = octokit;
   }
 
-  /**
-   * Initialize the Octokit instance
-   */
   private async getOctokit(): Promise<Octokit> {
-    if (!this.octokit) {
-      this.octokit = await getInstallationOctokit(this.installationId);
-    }
+    this.octokit ??= await getInstallationOctokit(this.installationId);
     return this.octokit;
   }
 
   /**
-   * Get user information
+   * Get a user's full public profile
    */
   async getUser(username: string) {
     const octokit = await this.getOctokit();
-    try {
-      const { data } = await octokit.users.getByUsername({ username });
-      return data;
-    } catch (error) {
-      console.error(`Failed to fetch user ${username}:`, error);
-      throw error;
-    }
+    const { data } = await octokit.rest.users.getByUsername({ username });
+    return data;
   }
 
   /**
-   * Get repository information
+   * Get a user's full public profile by their numeric ID (stable across username changes)
    */
-  async getRepository(owner: string, repo: string) {
+  async getUserById(accountId: number) {
     const octokit = await this.getOctokit();
-    try {
-      const { data } = await octokit.repos.get({ owner, repo });
-      return data;
-    } catch (error) {
-      console.error(`Failed to fetch repository ${owner}/${repo}:`, error);
-      throw error;
-    }
+    const { data } = await octokit.rest.users.getById({ account_id: accountId });
+    return data;
   }
 
   /**
-   * Get issue comments for a repository
+   * Get a user's recent public events (GitHub keeps roughly the last 90 days)
    */
-  async getIssueComments(owner: string, repo: string, issueNumber: number) {
+  async getUserPublicEvents(username: string, maxEvents = 100): Promise<UserEvent[]> {
     const octokit = await this.getOctokit();
-    try {
-      const { data } = await octokit.issues.listComments({
-        owner,
-        repo,
-        issue_number: issueNumber,
-        per_page: 100,
-      });
-      return data;
-    } catch (error) {
-      console.error(`Failed to fetch comments for ${owner}/${repo}#${issueNumber}:`, error);
-      throw error;
-    }
+    const { data } = await octokit.rest.activity.listPublicEventsForUser({
+      username,
+      per_page: Math.min(100, maxEvents),
+    });
+    return data.slice(0, maxEvents);
   }
 
   /**
-   * Get pull request review comments
+   * Get issue comments and pull request review comments for a repository,
+   * newest first, updated since the given date.
    */
-  async getPullRequestReviewComments(owner: string, repo: string, pullNumber: number) {
+  async getRepositoryComments(
+    owner: string,
+    repo: string,
+    options: { since?: Date; maxPerKind?: number } = {}
+  ): Promise<RepositoryComment[]> {
     const octokit = await this.getOctokit();
-    try {
-      const { data } = await octokit.pulls.listReviewComments({
-        owner,
-        repo,
-        pull_number: pullNumber,
-        per_page: 100,
-      });
-      return data;
-    } catch (error) {
-      console.error(
-        `Failed to fetch review comments for ${owner}/${repo}#${pullNumber}:`,
-        error
-      );
-      throw error;
-    }
-  }
+    const maxPerKind = options.maxPerKind ?? 1000;
+    const since = options.since?.toISOString();
+    const comments: RepositoryComment[] = [];
 
-  /**
-   * Get all comments for a repository (issues + PRs)
-   */
-  async getAllComments(owner: string, repo: string, since?: Date) {
-    const octokit = await this.getOctokit();
-    const comments: any[] = [];
-
-    try {
-      // Get issue comments
-      const issueCommentsIterator = octokit.paginate.iterator(octokit.issues.listCommentsForRepo, {
-        owner,
-        repo,
-        since: since?.toISOString(),
-        per_page: 100,
-      });
-
-      for await (const { data: issueComments } of issueCommentsIterator) {
-        comments.push(...issueComments);
+    let issueCount = 0;
+    for await (const { data } of octokit.paginate.iterator(
+      octokit.rest.issues.listCommentsForRepo,
+      { owner, repo, since, sort: 'updated', direction: 'desc', per_page: 100 }
+    )) {
+      for (const comment of data) {
+        if (issueCount >= maxPerKind) break;
+        comments.push({
+          kind: 'issue_comment',
+          id: comment.id,
+          body: comment.body ?? '',
+          createdAt: comment.created_at,
+          user: comment.user ?? null,
+          issueNumber: numberFromUrl(comment.issue_url),
+        });
+        issueCount++;
       }
-
-      return comments;
-    } catch (error) {
-      console.error(`Failed to fetch all comments for ${owner}/${repo}:`, error);
-      throw error;
+      if (issueCount >= maxPerKind) break;
     }
-  }
 
-  /**
-   * Get user's contribution activity across repositories
-   */
-  async getUserEvents(username: string) {
-    const octokit = await this.getOctokit();
-    try {
-      const { data } = await octokit.activity.listPublicEventsForUser({
-        username,
-        per_page: 100,
-      });
-      return data;
-    } catch (error) {
-      console.error(`Failed to fetch events for user ${username}:`, error);
-      throw error;
+    let reviewCount = 0;
+    for await (const { data } of octokit.paginate.iterator(
+      octokit.rest.pulls.listReviewCommentsForRepo,
+      { owner, repo, since, sort: 'updated', direction: 'desc', per_page: 100 }
+    )) {
+      for (const comment of data) {
+        if (reviewCount >= maxPerKind) break;
+        comments.push({
+          kind: 'review_comment',
+          id: comment.id,
+          body: comment.body ?? '',
+          createdAt: comment.created_at,
+          user: comment.user ?? null,
+          prNumber: numberFromUrl(comment.pull_request_url),
+        });
+        reviewCount++;
+      }
+      if (reviewCount >= maxPerKind) break;
     }
+
+    return comments;
   }
 
   /**
@@ -143,13 +134,8 @@ export class GitHubAPIClient {
    */
   async getRateLimit() {
     const octokit = await this.getOctokit();
-    try {
-      const { data } = await octokit.rateLimit.get();
-      return data;
-    } catch (error) {
-      console.error('Failed to fetch rate limit:', error);
-      throw error;
-    }
+    const { data } = await octokit.rest.rateLimit.get();
+    return data;
   }
 }
 

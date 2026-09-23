@@ -15,6 +15,7 @@ model Repository {
   githubId       BigInt     @unique
   fullName       String     @unique // "owner/repo"
   installationId Int
+  commentsSyncedAt DateTime? // Last backfill of comment history from the GitHub API
   analyses       Analysis[]
   alerts         Alert[]
   comments       Comment[]
@@ -33,6 +34,7 @@ model Account {
   createdAt       DateTime?         // GitHub account creation date, set when the profile is synced
   profileData     Json              // Full GitHub profile
   profileSyncedAt DateTime?
+  activitySummary Json?             // Repositories the account was recently active in (public events)
   riskScore       Float             @default(0)
   flagReasons     String[]          // Array of detection reasons
   comments        Comment[]
@@ -69,7 +71,8 @@ model Analysis {
   repositoryId     String
   repository       Repository        @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
   triggeredBy      String            // "webhook" | "manual"
-  status           String            // "pending" | "processing" | "completed" | "failed"
+  status           String            @default("pending") // "pending" | "processing" | "completed" | "failed"
+  startedAt        DateTime?
   accountResults   AccountAnalysis[]
   detectedClusters Json[]            // Coordinated groups
   errorMessage     String?           @db.Text

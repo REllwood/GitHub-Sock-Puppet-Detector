@@ -11,8 +11,9 @@ export interface AnalyzeCommentJob {
 
 export interface AnalyzeRepositoryJob {
   repositoryId: string;
-  installationId: number;
   triggeredBy: 'webhook' | 'manual';
+  // Set for manual analyses (created up front so the UI can link to it) and on retries
+  analysisId?: string;
 }
 
 // Queue names
@@ -27,6 +28,15 @@ const defaultJobOptions: DefaultJobOptions = {
   removeOnComplete: { count: 1000 },
   removeOnFail: { count: 5000 },
 };
+
+/**
+ * Webhook-triggered analyses are debounced: all comments on a repository within the same
+ * window are covered by a single analysis that runs when the window closes.
+ */
+export function getAnalysisDebounceMs(): number {
+  const value = Number(process.env.ANALYSIS_DEBOUNCE_MS);
+  return Number.isFinite(value) && value > 0 ? value : 60_000;
+}
 
 // Queues are created lazily so that importing this module never opens a Redis connection,
 // and cached on globalThis so Next.js hot reloads don't leak connections.
@@ -58,9 +68,31 @@ export async function queueCommentAnalysis(data: AnalyzeCommentJob) {
   return job;
 }
 
-export async function queueRepositoryAnalysis(data: AnalyzeRepositoryJob) {
-  const job = await getRepositoryAnalysisQueue().add(QUEUE_NAMES.ANALYZE_REPOSITORY, data);
+/**
+ * Queue an analysis that has already been created (manual trigger)
+ */
+export async function queueRepositoryAnalysis(data: AnalyzeRepositoryJob & { analysisId: string }) {
+  const job = await getRepositoryAnalysisQueue().add(QUEUE_NAMES.ANALYZE_REPOSITORY, data, {
+    jobId: `manual-${data.analysisId}`,
+  });
   console.log(`Queued repository analysis job: ${job.id}`);
+  return job;
+}
+
+/**
+ * Schedule a debounced, webhook-triggered analysis of a repository
+ */
+export async function scheduleRepositoryAnalysis(repositoryId: string, now: number = Date.now()) {
+  const debounceMs = getAnalysisDebounceMs();
+  const window = Math.floor(now / debounceMs);
+  const runAt = (window + 1) * debounceMs;
+
+  const job = await getRepositoryAnalysisQueue().add(
+    QUEUE_NAMES.ANALYZE_REPOSITORY,
+    { repositoryId, triggeredBy: 'webhook' },
+    { jobId: `repo-${repositoryId}-${window}`, delay: runAt - now }
+  );
+  console.log(`Scheduled repository analysis job: ${job.id}`);
   return job;
 }
 

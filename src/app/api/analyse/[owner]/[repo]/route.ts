@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { jsonResponse } from '@/lib/http';
-import { queueRepositoryAnalysis } from '@/lib/queue/setup';
+import { requestRepositoryAnalysis } from '@/lib/analysis/service';
 
 export async function POST(
   req: NextRequest,
@@ -23,35 +23,16 @@ export async function POST(
       );
     }
 
-    // Check if there's already an analysis in progress
-    const existingAnalysis = await prisma.analysis.findFirst({
-      where: {
-        repositoryId: repository.id,
-        status: { in: ['pending', 'processing'] },
+    const { analysis, alreadyRunning } = await requestRepositoryAnalysis(repository.id);
+
+    return jsonResponse(
+      {
+        message: alreadyRunning ? 'Analysis already in progress' : 'Analysis queued successfully',
+        repository: fullName,
+        analysisId: analysis.id,
       },
-    });
-
-    if (existingAnalysis) {
-      return jsonResponse(
-        {
-          message: 'Analysis already in progress',
-          analysisId: existingAnalysis.id,
-        },
-        { status: 202 }
-      );
-    }
-
-    // Queue analysis
-    await queueRepositoryAnalysis({
-      repositoryId: repository.id,
-      installationId: repository.installationId,
-      triggeredBy: 'manual',
-    });
-
-    return jsonResponse({
-      message: 'Analysis queued successfully',
-      repository: fullName,
-    });
+      { status: 202 }
+    );
   } catch (error) {
     console.error('Failed to queue analysis:', error);
     return jsonResponse({ error: 'Internal server error' }, { status: 500 });
